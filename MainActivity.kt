@@ -5,7 +5,11 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.net.Uri
+import android.view.MotionEvent
+import android.view.View
 import android.os.Bundle
 import android.widget.Button
 import android.widget.LinearLayout
@@ -82,6 +86,7 @@ class MainActivity : Activity() {
         b.background = bg(if (primary) AC else CARD, BD)
         b.layoutParams = lp()
         b.setOnClickListener { onClick() }
+        pressFx(b)
         return b
     }
 
@@ -98,8 +103,24 @@ class MainActivity : Activity() {
         val c = card()
         c.addView(tv(title, 17f, true))
         c.addView(tv(sub, 14f, false, MU))
-        if (onClick != null) c.setOnClickListener { onClick() } else c.alpha = 0.5f
+        if (onClick != null) {
+            c.setOnClickListener { onClick() }
+            pressFx(c)
+        } else {
+            c.alpha = 0.5f
+            c.tag = "dim"
+        }
         return c
+    }
+
+    private fun pressFx(v: View) {
+        v.setOnTouchListener { x, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> x.animate().scaleX(0.96f).scaleY(0.96f).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> x.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
+            }
+            false
+        }
     }
 
     private fun show(b: (() -> Unit)?, build: LinearLayout.() -> Unit) {
@@ -107,6 +128,13 @@ class MainActivity : Activity() {
         box.removeAllViews()
         box.build()
         root.scrollTo(0, 0)
+        for (i in 0 until box.childCount) {
+            val v = box.getChildAt(i)
+            val target = if (v.tag == "dim") 0.5f else 1f
+            v.alpha = 0f
+            v.translationY = dp(14).toFloat()
+            v.animate().alpha(target).translationY(0f).setDuration(260).setStartDelay(minOf(i, 10) * 40L).start()
+        }
     }
 
     private fun prefs() = getSharedPreferences("nmt", 0)
@@ -134,8 +162,9 @@ class MainActivity : Activity() {
     private fun hist() {
         show({ home() }) {
             addView(tv("Історія України", 24f, true))
+            addView(site())
             val d = prefs().getFloat("d", -1f)
-            val sub = if (d < 0) "14 питань з усіх класів" else "Останній результат ≈ ${(100 + d * 100).toInt()} балів"
+            val sub = if (d < 0) "30 питань з усіх класів" else "Останній результат ≈ ${(100 + d * 100).toInt()} балів"
             addView(menu("Діагностичний тест", sub) { diag() })
             addView(menu("📌 Усі пам’ятки", "ключові дати всіх класів") { memos() })
             for (i in 0 until data.length()) {
@@ -210,6 +239,18 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun open(u: String) {
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
+    }
+
+    private fun site(): LinearLayout {
+        val c = card()
+        c.addView(tv("ℹ️ Тести в цьому додатку — лише для закріплення матеріалу. Для пробного проходження НМТ користуйся сайтом zno.osvita.ua:", 14f, false, MU))
+        c.addView(btn("Тренувальні варіанти НМТ") { open("https://zno.osvita.ua/ukraine-history/nmt.html") })
+        c.addView(btn("Завдання за темами", false) { open("https://zno.osvita.ua/ukraine-history/tema.html") })
+        return c
+    }
+
     private fun memoCard(g: JSONObject): LinearLayout {
         val c = card()
         c.background = bg(0xFF3A3220.toInt(), 0xFF6B5B2A.toInt())
@@ -236,8 +277,14 @@ class MainActivity : Activity() {
 
     private fun diag() {
         val l = ArrayList<JSONObject>()
-        for (g in toList(data)) l.addAll(toList(g.getJSONArray("q")).shuffled().take(2))
-        quiz(l, "d", "Діагностика") { hist() }
+        val rest = ArrayList<JSONObject>()
+        for (g in toList(data)) {
+            val s = toList(g.getJSONArray("q")).shuffled()
+            l.addAll(s.take(4))
+            rest.addAll(s.drop(4))
+        }
+        l.addAll(rest.shuffled().take(2))
+        quiz(l.shuffled(), "d", "Діагностика") { hist() }
     }
 
     private fun quiz(qs: List<JSONObject>, key: String, title: String, ret: () -> Unit) {
@@ -249,10 +296,16 @@ class MainActivity : Activity() {
             show(ret) {
                 addView(tv(title, 22f, true))
                 val c = card()
-                c.addView(tv("$ok / ${qs.size}", 44f, true))
+                val sc = tv("0 / ${qs.size}", 44f, true)
+                c.addView(sc)
+                val va = ValueAnimator.ofInt(0, ok)
+                va.duration = 700
+                va.addUpdateListener { sc.text = "${it.animatedValue} / ${qs.size}" }
+                va.start()
                 c.addView(tv("Правильно: ${(p * 100).toInt()}%. Орієнтовно ≈ ${(100 + p * 100).toInt()} балів зі 200.", 15f, false, MU))
                 addView(c)
                 addView(tv(if (p < 0.7f) "Варто повторити конспект і спробувати ще раз." else "Гарний результат!", 16f))
+                addView(site())
                 addView(btn("Назад") { ret() })
             }
         }
@@ -270,13 +323,39 @@ class MainActivity : Activity() {
                         if (j == a) ok++
                         for ((m, x) in bs.withIndex()) {
                             x.isEnabled = false
-                            if (m == a) { x.background = bg(OK, OK); x.setTextColor(Color.WHITE) }
-                            else if (m == j) { x.background = bg(BAD, BAD); x.setTextColor(Color.WHITE) }
+                            if (m == a) {
+                                x.background = bg(OK, OK)
+                                x.setTextColor(Color.WHITE)
+                                x.animate().scaleX(1.05f).scaleY(1.05f).setDuration(150).withEndAction {
+                                    x.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
+                                }.start()
+                            } else if (m == j) {
+                                x.background = bg(BAD, BAD)
+                                x.setTextColor(Color.WHITE)
+                                val s = dp(10).toFloat()
+                                ObjectAnimator.ofFloat(x, "translationX", 0f, -s, s, -s / 2, s / 2, 0f).setDuration(350).start()
+                            }
                         }
-                        addView(btn(if (k + 1 < qs.size) "Далі" else "Результат") {
+                        val ex = q.optString("e", "")
+                        if (ex.isNotEmpty()) {
+                            val ec = card()
+                            ec.addView(tv("💡 " + ex, 15f, false, MU))
+                            val eb = btn("💡 Пояснення", false) {}
+                            eb.setOnClickListener {
+                                eb.visibility = View.GONE
+                                addView(ec, indexOfChild(eb) + 1)
+                                ec.alpha = 0f
+                                ec.animate().alpha(1f).setDuration(250).start()
+                            }
+                            addView(eb)
+                        }
+                        val nb = btn(if (k + 1 < qs.size) "Далі" else "Результат") {
                             k++
                             if (k < qs.size) ask() else end()
-                        })
+                        }
+                        nb.alpha = 0f
+                        addView(nb)
+                        nb.animate().alpha(1f).setDuration(250).start()
                     }
                     bs.add(b)
                     addView(b)
