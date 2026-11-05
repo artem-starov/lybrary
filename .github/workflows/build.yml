@@ -24,6 +24,10 @@ jobs:
           cp data.json app/src/main/assets/
           cp AndroidManifest.xml app/src/main/
           cp app-build.gradle.kts app/build.gradle.kts
+          mkdir -p app/src/main/res/drawable app/src/main/res/drawable-anydpi-v26
+          cp ic_launcher_background.xml ic_launcher_foreground.xml app/src/main/res/drawable/
+          cp ic_launcher_legacy.xml app/src/main/res/drawable/ic_launcher.xml
+          cp ic_launcher_adaptive.xml app/src/main/res/drawable-anydpi-v26/ic_launcher.xml
       - name: Build APK
         run: gradle assembleDebug --no-daemon
       - name: Collect APK
