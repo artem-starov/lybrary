@@ -15,14 +15,14 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class MainActivity : Activity() {
-    private val BG = 0xFFF6F7FB.toInt()
-    private val CARD = 0xFFFFFFFF.toInt()
-    private val TX = 0xFF1B1F2A.toInt()
-    private val MU = 0xFF667085.toInt()
-    private val AC = 0xFF2563EB.toInt()
+    private val BG = 0xFF0F1218.toInt()
+    private val CARD = 0xFF181D27.toInt()
+    private val TX = 0xFFEEF1F7.toInt()
+    private val MU = 0xFF98A2B3.toInt()
+    private val AC = 0xFF4F7CF5.toInt()
     private val OK = 0xFF16A34A.toInt()
     private val BAD = 0xFFDC2626.toInt()
-    private val BD = 0xFFE4E7EE.toInt()
+    private val BD = 0xFF2A3140.toInt()
 
     private lateinit var root: ScrollView
     private lateinit var box: LinearLayout
@@ -212,7 +212,7 @@ class MainActivity : Activity() {
 
     private fun memoCard(g: JSONObject): LinearLayout {
         val c = card()
-        c.background = bg(0xFFFFF4D6.toInt(), 0xFFF2D98A.toInt())
+        c.background = bg(0xFF3A3220.toInt(), 0xFF6B5B2A.toInt())
         c.addView(tv("📌 Пам’ятка", 17f, true))
         val m = g.getJSONArray("memo")
         for (j in 0 until m.length()) {
