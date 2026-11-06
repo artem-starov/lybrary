@@ -188,13 +188,13 @@ class MainActivity : Activity() {
             val used = HashSet<String>()
             for (j in 0 until s.length()) {
                 val full = s.getString(j)
-                val row = LinearLayout(this)
+                val row = LinearLayout(this@MainActivity)
                 row.orientation = LinearLayout.HORIZONTAL
                 row.setPadding(0, dp(6), 0, dp(6))
                 val t = tv("• " + full, 16f)
                 t.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
                 row.addView(t)
-                val iv = ImageView(this)
+                val iv = ImageView(this@MainActivity)
                 iv.scaleType = ImageView.ScaleType.FIT_CENTER
                 val lp2 = LinearLayout.LayoutParams(dp(104), dp(104))
                 lp2.leftMargin = dp(10)
