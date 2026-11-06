@@ -262,18 +262,32 @@ class MainActivity : Activity() {
         }
     }
 
+    private val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+
     private fun http(u: String): ByteArray? {
-        return try {
-            val c = URL(u).openConnection() as HttpURLConnection
-            c.connectTimeout = 8000
-            c.readTimeout = 10000
-            c.setRequestProperty("User-Agent", "NMTStudyApp/1.0 (student study app)")
-            val r = if (c.responseCode == 200) c.inputStream.use { it.readBytes() } else null
-            c.disconnect()
-            r
-        } catch (e: Exception) {
-            null
+        for (t in 0..1) {
+            try {
+                val c = URL(u).openConnection() as HttpURLConnection
+                c.connectTimeout = 10000
+                c.readTimeout = 15000
+                c.setRequestProperty("User-Agent", "NMTStudyApp/1.0 (student study app; contact: github.com)")
+                c.setRequestProperty("Accept", "*/*")
+                val code = c.responseCode
+                if (code == 200) {
+                    val r = c.inputStream.use { it.readBytes() }
+                    c.disconnect()
+                    return r
+                }
+                c.disconnect()
+                if (code != 429 && code < 500) return null
+            } catch (e: Exception) {
+            }
+            try {
+                Thread.sleep(1500)
+            } catch (e: Exception) {
+            }
         }
+        return null
     }
 
     private fun imgView(): ImageView {
@@ -289,7 +303,7 @@ class MainActivity : Activity() {
     }
 
     private fun setImg(iv: ImageView, url: String, link: String?, cap: View? = null) {
-        Thread {
+        pool.execute {
             val b = http(url)
             val bmp = if (b != null) BitmapFactory.decodeByteArray(b, 0, b.size) else null
             if (bmp != null) runOnUiThread {
@@ -300,14 +314,14 @@ class MainActivity : Activity() {
                 iv.animate().alpha(1f).setDuration(300).start()
                 if (link != null && link.isNotEmpty()) iv.setOnClickListener { open(link) }
             }
-        }.start()
+        }
     }
 
     private fun portrait(iv: ImageView, name: String) {
-        Thread {
+        pool.execute {
             val u = "https://uk.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=" + Uri.encode(name) +
-                "&gsrlimit=1&prop=pageimages&piprop=thumbnail&pithumbsize=600&format=json"
-            val b = http(u) ?: return@Thread
+                "&gsrlimit=1&prop=pageimages&piprop=thumbnail&pithumbsize=500&format=json"
+            val b = http(u) ?: return@execute
             try {
                 val pages = JSONObject(String(b, Charsets.UTF_8)).getJSONObject("query").getJSONObject("pages")
                 val keys = pages.keys()
@@ -322,34 +336,34 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) {
             }
-        }.start()
+        }
     }
 
     private fun wikiImg(iv: ImageView, query: String, used: MutableSet<String>, cap: View? = null) {
-        Thread {
+        pool.execute {
             val u = "https://uk.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=" + Uri.encode(query) +
                 "&gsrlimit=1&prop=pageimages&piprop=thumbnail&pithumbsize=500&format=json"
-            val b = http(u) ?: return@Thread
+            val b = http(u) ?: return@execute
             try {
                 val pages = JSONObject(String(b, Charsets.UTF_8)).getJSONObject("query").getJSONObject("pages")
                 val p = pages.getJSONObject(pages.keys().next())
-                val th = p.optJSONObject("thumbnail") ?: return@Thread
+                val th = p.optJSONObject("thumbnail") ?: return@execute
                 val src = th.getString("source")
                 val added = synchronized(used) { used.add(src) }
-                if (!added) return@Thread
+                if (!added) return@execute
                 val page = "https://uk.wikipedia.org/wiki/" + Uri.encode(p.getString("title").replace(' ', '_'))
                 runOnUiThread { setImg(iv, src, page, cap) }
             } catch (e: Exception) {
             }
-        }.start()
+        }
     }
 
     private fun mapImg(iv: ImageView, cap: View, query: String, used: MutableSet<String>) {
-        Thread {
+        pool.execute {
             var done = false
             try {
                 val u = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=5&gsrsearch=" +
-                    Uri.encode(query) + "&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=900&format=json"
+                    Uri.encode(query) + "&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=960&format=json"
                 val b = http(u)
                 if (b != null) {
                     val pages = JSONObject(String(b, Charsets.UTF_8)).getJSONObject("query").getJSONObject("pages")
@@ -371,14 +385,14 @@ class MainActivity : Activity() {
             } catch (e: Exception) {
             }
             if (!done) wikiImg(iv, query, used, cap)
-        }.start()
+        }
     }
 
     private fun commons(card: LinearLayout, query: String) {
-        Thread {
+        pool.execute {
             val u = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=3&gsrsearch=" +
-                Uri.encode(query) + "&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=900&format=json"
-            val b = http(u) ?: return@Thread
+                Uri.encode(query) + "&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=960&format=json"
+            val b = http(u) ?: return@execute
             try {
                 val pages = JSONObject(String(b, Charsets.UTF_8)).getJSONObject("query").getJSONObject("pages")
                 val list = ArrayList<JSONObject>()
@@ -401,7 +415,7 @@ class MainActivity : Activity() {
                 }
             } catch (e: Exception) {
             }
-        }.start()
+        }
     }
 
     private fun open(u: String) {
