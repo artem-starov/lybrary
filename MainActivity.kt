@@ -204,6 +204,20 @@ class MainActivity : Activity() {
                 val tp = full.substringAfter("Тема в підручнику: ", "")
                 if (tp.isNotEmpty()) wikiImg(iv, tp, used)
                 c.addView(row)
+                val mps = g.optJSONArray("maps")
+                if (mps != null) {
+                    for (qi in 0 until mps.length()) {
+                        val mj = mps.getJSONArray(qi)
+                        if (mj.length() > 2 && mj.getInt(2) == j) {
+                            val cap = tv("🗺 " + mj.getString(0), 13f, false, MU)
+                            cap.visibility = View.GONE
+                            c.addView(cap)
+                            val mv = imgView()
+                            c.addView(mv)
+                            mapImg(mv, cap, mj.getString(1), used)
+                        }
+                    }
+                }
             }
             addView(c)
             val tm = g.optJSONArray("terms")
@@ -219,18 +233,6 @@ class MainActivity : Activity() {
                     tc.addView(x)
                 }
                 addView(tc)
-            }
-            val mp = g.optJSONArray("maps")
-            if (mp != null && mp.length() > 0) {
-                val h3 = tv("Карти й зображення", 20f, true)
-                h3.setPadding(0, dp(12), 0, 0)
-                addView(h3)
-                addView(tv("Картинки до подій показано збоку біля кожного пункту конспекту (потрібен інтернет), натисни на неї — відкриється стаття Вікіпедії. Тут — пошук карт у Google.", 13f, false, MU))
-                for (j in 0 until mp.length()) {
-                    val mj = mp.getJSONArray(j)
-                    val u = "https://www.google.com/search?tbm=isch&q=" + Uri.encode(mj.getString(1))
-                    addView(btn("🗺 " + mj.getString(0), false) { open(u) })
-                }
             }
             val p = g.getJSONArray("p")
             if (p.length() > 0) {
@@ -286,13 +288,14 @@ class MainActivity : Activity() {
         return v
     }
 
-    private fun setImg(iv: ImageView, url: String, link: String?) {
+    private fun setImg(iv: ImageView, url: String, link: String?, cap: View? = null) {
         Thread {
             val b = http(url)
             val bmp = if (b != null) BitmapFactory.decodeByteArray(b, 0, b.size) else null
             if (bmp != null) runOnUiThread {
                 iv.setImageBitmap(bmp)
                 iv.visibility = View.VISIBLE
+                cap?.visibility = View.VISIBLE
                 iv.alpha = 0f
                 iv.animate().alpha(1f).setDuration(300).start()
                 if (link != null && link.isNotEmpty()) iv.setOnClickListener { open(link) }
@@ -322,7 +325,7 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun wikiImg(iv: ImageView, query: String, used: MutableSet<String>) {
+    private fun wikiImg(iv: ImageView, query: String, used: MutableSet<String>, cap: View? = null) {
         Thread {
             val u = "https://uk.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=" + Uri.encode(query) +
                 "&gsrlimit=1&prop=pageimages&piprop=thumbnail&pithumbsize=500&format=json"
@@ -335,9 +338,39 @@ class MainActivity : Activity() {
                 val added = synchronized(used) { used.add(src) }
                 if (!added) return@Thread
                 val page = "https://uk.wikipedia.org/wiki/" + Uri.encode(p.getString("title").replace(' ', '_'))
-                runOnUiThread { setImg(iv, src, page) }
+                runOnUiThread { setImg(iv, src, page, cap) }
             } catch (e: Exception) {
             }
+        }.start()
+    }
+
+    private fun mapImg(iv: ImageView, cap: View, query: String, used: MutableSet<String>) {
+        Thread {
+            var done = false
+            try {
+                val u = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=5&gsrsearch=" +
+                    Uri.encode(query) + "&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=900&format=json"
+                val b = http(u)
+                if (b != null) {
+                    val pages = JSONObject(String(b, Charsets.UTF_8)).getJSONObject("query").getJSONObject("pages")
+                    val list = ArrayList<JSONObject>()
+                    val keys = pages.keys()
+                    while (keys.hasNext()) list.add(pages.getJSONObject(keys.next()))
+                    list.sortBy { it.optInt("index", 99) }
+                    for (p in list) {
+                        val ii = p.optJSONArray("imageinfo")?.optJSONObject(0) ?: continue
+                        if (!ii.optString("mime").startsWith("image/")) continue
+                        val th = ii.optString("thumburl", ii.optString("url"))
+                        if (!synchronized(used) { used.add(th) }) continue
+                        val page = ii.optString("descriptionurl")
+                        runOnUiThread { setImg(iv, th, page, cap) }
+                        done = true
+                        break
+                    }
+                }
+            } catch (e: Exception) {
+            }
+            if (!done) wikiImg(iv, query, used, cap)
         }.start()
     }
 
