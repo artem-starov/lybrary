@@ -2,6 +2,7 @@ package com.nmt.navchannia
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -12,11 +13,14 @@ import android.view.MotionEvent
 import android.view.View
 import android.os.Bundle
 import android.widget.Button
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : Activity() {
     private val BG = 0xFF0F1218.toInt()
@@ -181,10 +185,25 @@ class MainActivity : Activity() {
             addView(memoCard(g))
             val c = card()
             val s = g.getJSONArray("s")
+            val used = HashSet<String>()
             for (j in 0 until s.length()) {
-                val t = tv("• " + s.getString(j), 16f)
-                t.setPadding(0, dp(4), 0, dp(4))
-                c.addView(t)
+                val full = s.getString(j)
+                val row = LinearLayout(this)
+                row.orientation = LinearLayout.HORIZONTAL
+                row.setPadding(0, dp(6), 0, dp(6))
+                val t = tv("• " + full, 16f)
+                t.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                row.addView(t)
+                val iv = ImageView(this)
+                iv.scaleType = ImageView.ScaleType.FIT_CENTER
+                val lp2 = LinearLayout.LayoutParams(dp(104), dp(104))
+                lp2.leftMargin = dp(10)
+                iv.layoutParams = lp2
+                iv.visibility = View.GONE
+                row.addView(iv)
+                val tp = full.substringAfter("Тема в підручнику: ", "")
+                if (tp.isNotEmpty()) wikiImg(iv, tp, used)
+                c.addView(row)
             }
             addView(c)
             val tm = g.optJSONArray("terms")
@@ -206,12 +225,11 @@ class MainActivity : Activity() {
                 val h3 = tv("Карти й зображення", 20f, true)
                 h3.setPadding(0, dp(12), 0, 0)
                 addView(h3)
+                addView(tv("Картинки до подій показано збоку біля кожного пункту конспекту (потрібен інтернет), натисни на неї — відкриється стаття Вікіпедії. Тут — пошук карт у Google.", 13f, false, MU))
                 for (j in 0 until mp.length()) {
                     val mj = mp.getJSONArray(j)
                     val u = "https://www.google.com/search?tbm=isch&q=" + Uri.encode(mj.getString(1))
-                    addView(btn("🗺 " + mj.getString(0), false) {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
-                    })
+                    addView(btn("🗺 " + mj.getString(0), false) { open(u) })
                 }
             }
             val p = g.getJSONArray("p")
@@ -222,6 +240,9 @@ class MainActivity : Activity() {
             }
             for (o in toList(p)) {
                 val pc = card()
+                val piv = imgView()
+                pc.addView(piv)
+                portrait(piv, o.getString("name"))
                 pc.addView(tv(o.getString("name"), 17f, true))
                 pc.addView(tv(o.getString("years") + " · " + o.getString("role"), 14f, false, MU))
                 val d = tv(o.getString("desc"), 16f)
@@ -237,6 +258,117 @@ class MainActivity : Activity() {
                 quiz(toList(g.getJSONArray("q")), "g" + g.getInt("n"), "${g.getInt("n")} клас") { grade(i) }
             })
         }
+    }
+
+    private fun http(u: String): ByteArray? {
+        return try {
+            val c = URL(u).openConnection() as HttpURLConnection
+            c.connectTimeout = 8000
+            c.readTimeout = 10000
+            c.setRequestProperty("User-Agent", "NMTStudyApp/1.0 (student study app)")
+            val r = if (c.responseCode == 200) c.inputStream.use { it.readBytes() } else null
+            c.disconnect()
+            r
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun imgView(): ImageView {
+        val v = ImageView(this)
+        v.adjustViewBounds = true
+        v.scaleType = ImageView.ScaleType.FIT_CENTER
+        v.maxHeight = dp(320)
+        v.visibility = View.GONE
+        val p = LinearLayout.LayoutParams(-1, -2)
+        p.topMargin = dp(8)
+        v.layoutParams = p
+        return v
+    }
+
+    private fun setImg(iv: ImageView, url: String, link: String?) {
+        Thread {
+            val b = http(url)
+            val bmp = if (b != null) BitmapFactory.decodeByteArray(b, 0, b.size) else null
+            if (bmp != null) runOnUiThread {
+                iv.setImageBitmap(bmp)
+                iv.visibility = View.VISIBLE
+                iv.alpha = 0f
+                iv.animate().alpha(1f).setDuration(300).start()
+                if (link != null && link.isNotEmpty()) iv.setOnClickListener { open(link) }
+            }
+        }.start()
+    }
+
+    private fun portrait(iv: ImageView, name: String) {
+        Thread {
+            val u = "https://uk.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=" + Uri.encode(name) +
+                "&gsrlimit=1&prop=pageimages&piprop=thumbnail&pithumbsize=600&format=json"
+            val b = http(u) ?: return@Thread
+            try {
+                val pages = JSONObject(String(b, Charsets.UTF_8)).getJSONObject("query").getJSONObject("pages")
+                val keys = pages.keys()
+                while (keys.hasNext()) {
+                    val p = pages.getJSONObject(keys.next())
+                    val th = p.optJSONObject("thumbnail")
+                    if (th != null) {
+                        val page = "https://uk.wikipedia.org/wiki/" + Uri.encode(p.getString("title").replace(' ', '_'))
+                        runOnUiThread { setImg(iv, th.getString("source"), page) }
+                        break
+                    }
+                }
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
+
+    private fun wikiImg(iv: ImageView, query: String, used: MutableSet<String>) {
+        Thread {
+            val u = "https://uk.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=" + Uri.encode(query) +
+                "&gsrlimit=1&prop=pageimages&piprop=thumbnail&pithumbsize=500&format=json"
+            val b = http(u) ?: return@Thread
+            try {
+                val pages = JSONObject(String(b, Charsets.UTF_8)).getJSONObject("query").getJSONObject("pages")
+                val p = pages.getJSONObject(pages.keys().next())
+                val th = p.optJSONObject("thumbnail") ?: return@Thread
+                val src = th.getString("source")
+                val added = synchronized(used) { used.add(src) }
+                if (!added) return@Thread
+                val page = "https://uk.wikipedia.org/wiki/" + Uri.encode(p.getString("title").replace(' ', '_'))
+                runOnUiThread { setImg(iv, src, page) }
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
+
+    private fun commons(card: LinearLayout, query: String) {
+        Thread {
+            val u = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit=3&gsrsearch=" +
+                Uri.encode(query) + "&prop=imageinfo&iiprop=url%7Cmime&iiurlwidth=900&format=json"
+            val b = http(u) ?: return@Thread
+            try {
+                val pages = JSONObject(String(b, Charsets.UTF_8)).getJSONObject("query").getJSONObject("pages")
+                val list = ArrayList<JSONObject>()
+                val keys = pages.keys()
+                while (keys.hasNext()) list.add(pages.getJSONObject(keys.next()))
+                list.sortBy { it.optInt("index", 99) }
+                var n = 0
+                for (p in list) {
+                    val ii = p.optJSONArray("imageinfo")?.optJSONObject(0) ?: continue
+                    if (!ii.optString("mime").startsWith("image/")) continue
+                    if (n >= 2) break
+                    n++
+                    val th = ii.optString("thumburl", ii.optString("url"))
+                    val page = ii.optString("descriptionurl")
+                    runOnUiThread {
+                        val iv = imgView()
+                        card.addView(iv, 1)
+                        setImg(iv, th, page)
+                    }
+                }
+            } catch (e: Exception) {
+            }
+        }.start()
     }
 
     private fun open(u: String) {
