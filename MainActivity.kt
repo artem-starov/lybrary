@@ -1,24 +1,34 @@
 package com.nmt.navchannia
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.animation.ObjectAnimator
-import android.animation.ValueAnimator
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
-import android.view.MotionEvent
-import android.view.View
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
+import android.view.View
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -35,15 +45,23 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : Activity() {
-    private val BG = 0xFF0F1218.toInt()
-    private val CARD = 0xFF181D27.toInt()
-    private val TX = 0xFFEEF1F7.toInt()
-    private val MU = 0xFF98A2B3.toInt()
-    private val AC = 0xFF4F7CF5.toInt()
-    private val OK = 0xFF16A34A.toInt()
-    private val BAD = 0xFFDC2626.toInt()
-    private val WARN = 0xFFF59E0B.toInt()
-    private val BD = 0xFF2A3140.toInt()
+    // Палітра: глибокий синій вечір і золото пшениці. Кожна епоха має свій колір.
+    private val BG = 0xFF07122B.toInt()
+    private val BG2 = 0xFF0D2150.toInt()
+    private val CARD = 0xFF10224A.toInt()
+    private val CARD2 = 0xFF18306A.toInt()
+    private val TX = 0xFFF2F5FF.toInt()
+    private val MU = 0xFFA3B3D6.toInt()
+    private val AC = 0xFFFFC94D.toInt()
+    private val ON_AC = 0xFF2A1D00.toInt()
+    private val OK = 0xFF2DD4A0.toInt()
+    private val BAD = 0xFFFF6B6B.toInt()
+    private val WARN = 0xFFFFA94D.toInt()
+    private val BD = 0x33FFFFFF
+    private val ERA = intArrayOf(
+        0xFF2DD4BF.toInt(), 0xFFFFC94D.toInt(), 0xFFFB923C.toInt(), 0xFFF472B6.toInt(),
+        0xFFA78BFA.toInt(), 0xFF60A5FA.toInt(), 0xFF34D399.toInt()
+    )
 
     private lateinit var root: ScrollView
     private lateinit var box: LinearLayout
@@ -55,12 +73,18 @@ class MainActivity : Activity() {
     override fun onCreate(s: Bundle?) {
         super.onCreate(s)
         data = JSONArray(assets.open("data.json").bufferedReader().use { it.readText() })
+        try {
+            window.statusBarColor = BG2
+            window.navigationBarColor = BG
+        } catch (e: Exception) {
+        }
         root = ScrollView(this)
-        root.setBackgroundColor(BG)
+        root.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(BG2, BG))
         root.fitsSystemWindows = true
+        root.isVerticalScrollBarEnabled = false
         box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
-        box.setPadding(dp(16), dp(16), dp(16), dp(24))
+        box.setPadding(dp(16), dp(16), dp(16), dp(28))
         root.addView(box)
         setContentView(root)
         home()
@@ -79,21 +103,54 @@ class MainActivity : Activity() {
         return p
     }
 
+    // Заголовки (від 20sp) — із засічками, як у літописі; решта — звичайний шрифт
     private fun tv(text: String, size: Float = 16f, bold: Boolean = false, color: Int = TX): TextView {
         val t = TextView(this)
         t.text = text
         t.textSize = size
         t.setTextColor(color)
-        if (bold) t.setTypeface(null, Typeface.BOLD)
+        t.setLineSpacing(0f, 1.12f)
+        if (bold) {
+            t.typeface = if (size >= 20f) Typeface.create("serif", Typeface.BOLD) else Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
         return t
     }
 
-    private fun bg(fill: Int, stroke: Int = Color.TRANSPARENT): GradientDrawable {
+    private fun h1(text: String, size: Float = 28f): TextView {
+        val t = tv(text, size, true)
+        t.setPadding(0, dp(4), 0, dp(4))
+        return t
+    }
+
+    private fun bg(fill: Int, stroke: Int = Color.TRANSPARENT, r: Int = 16): GradientDrawable {
         val g = GradientDrawable()
         g.setColor(fill)
-        g.cornerRadius = dp(12).toFloat()
+        g.cornerRadius = dp(r).toFloat()
         g.setStroke(dp(1), stroke)
         return g
+    }
+
+    private fun circle(c: Int): GradientDrawable {
+        val g = GradientDrawable()
+        g.shape = GradientDrawable.OVAL
+        g.setColor(c)
+        return g
+    }
+
+    private fun ripple(d: Drawable, r: Int = 16): Drawable =
+        RippleDrawable(ColorStateList.valueOf(0x33FFFFFF), d, bg(Color.WHITE, Color.TRANSPARENT, r))
+
+    private fun tint(c: Int, a: Int): Int = (a shl 24) or (c and 0x00FFFFFF)
+
+    private fun badge(text: String, color: Int, size: Int = 44, textSize: Float = 20f): TextView {
+        val t = TextView(this)
+        t.text = text
+        t.textSize = textSize
+        t.gravity = Gravity.CENTER
+        t.setTextColor(TX)
+        t.background = circle(color)
+        t.layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
+        return t
     }
 
     private fun btn(text: String, primary: Boolean = true, onClick: () -> Unit): Button {
@@ -101,8 +158,11 @@ class MainActivity : Activity() {
         b.text = text
         b.isAllCaps = false
         b.textSize = 16f
-        b.setTextColor(if (primary) Color.WHITE else TX)
-        b.background = bg(if (primary) AC else CARD, BD)
+        b.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        b.stateListAnimator = null
+        b.minHeight = dp(52)
+        b.setTextColor(if (primary) ON_AC else TX)
+        b.background = ripple(if (primary) bg(AC, AC, 16) else bg(CARD2, BD, 16))
         b.layoutParams = lp()
         b.setOnClickListener { onClick() }
         pressFx(b)
@@ -112,22 +172,36 @@ class MainActivity : Activity() {
     private fun card(): LinearLayout {
         val c = LinearLayout(this)
         c.orientation = LinearLayout.VERTICAL
-        c.setPadding(dp(14), dp(12), dp(14), dp(12))
-        c.background = bg(CARD, BD)
+        c.setPadding(dp(16), dp(14), dp(16), dp(14))
+        c.background = bg(CARD, BD, 18)
         c.layoutParams = lp()
         return c
     }
 
-    private fun menu(title: String, sub: String, onClick: (() -> Unit)?): LinearLayout {
+    private fun clickable(c: View, d: Drawable, onClick: () -> Unit) {
+        c.background = ripple(d, 18)
+        c.setOnClickListener { onClick() }
+        pressFx(c)
+    }
+
+    private fun navRow(icon: String, color: Int, ttl: String, sub: String, onClick: (() -> Unit)?): LinearLayout {
         val c = card()
-        c.addView(tv(title, 17f, true))
-        c.addView(tv(sub, 14f, false, MU))
+        c.orientation = LinearLayout.HORIZONTAL
+        c.gravity = Gravity.CENTER_VERTICAL
+        c.addView(badge(icon, tint(color, 0x33), 44))
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        val cp = LinearLayout.LayoutParams(0, -2, 1f)
+        cp.leftMargin = dp(14)
+        col.layoutParams = cp
+        col.addView(tv(ttl, 17f, true))
+        col.addView(tv(sub, 13f, false, MU))
+        c.addView(col)
         if (onClick != null) {
-            c.setOnClickListener { onClick() }
-            pressFx(c)
+            c.addView(tv("›", 26f, false, MU))
+            clickable(c, bg(CARD, BD, 18)) { onClick() }
         } else {
             c.alpha = 0.5f
-            c.tag = "dim"
         }
         return c
     }
@@ -135,25 +209,23 @@ class MainActivity : Activity() {
     private fun pressFx(v: View) {
         v.setOnTouchListener { x, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> x.animate().scaleX(0.96f).scaleY(0.96f).setDuration(90).start()
+                MotionEvent.ACTION_DOWN -> x.animate().scaleX(0.97f).scaleY(0.97f).setDuration(90).start()
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> x.animate().scaleX(1f).scaleY(1f).setDuration(120).start()
             }
             false
         }
     }
 
+    // Один плавний перехід на весь екран
     private fun show(b: (() -> Unit)?, build: LinearLayout.() -> Unit) {
         back = b
         box.removeAllViews()
         box.build()
         root.scrollTo(0, 0)
-        for (i in 0 until box.childCount) {
-            val v = box.getChildAt(i)
-            val target = if (v.tag == "dim") 0.5f else 1f
-            v.alpha = 0f
-            v.translationY = dp(14).toFloat()
-            v.animate().alpha(target).translationY(0f).setDuration(260).setStartDelay(minOf(i, 10) * 40L).start()
-        }
+        box.animate().cancel()
+        box.alpha = 0f
+        box.translationY = dp(14).toFloat()
+        box.animate().alpha(1f).translationY(0f).setDuration(240).setInterpolator(DecelerateInterpolator()).start()
     }
 
     private fun prefs() = getSharedPreferences("nmt", 0)
@@ -397,7 +469,7 @@ class MainActivity : Activity() {
         }
         if (due == 0) {
             show({ hist() }) {
-                addView(tv("🔁 Повторення", 24f, true))
+                addView(h1("🔁 Повторення"))
                 val c = card()
                 c.addView(tv("Поки що нічого повторювати. Пройди діагностичний тест або тест по класу — питання, на яких помилишся, потрапляють сюди й повертаються частіше.", 16f))
                 addView(c)
@@ -444,7 +516,7 @@ class MainActivity : Activity() {
 
     private fun statsScreen() {
         show({ hist() }) {
-            addView(tv("📊 Статистика", 24f, true))
+            addView(h1("📊 Статистика"))
             val s = stats()
             val all = allQ()
             var answers = 0
@@ -549,38 +621,185 @@ class MainActivity : Activity() {
 
     // ───────────── Екрани ─────────────
 
+    // [пройдено питань, засвоєно, усього, відповідей, правильних]
+    private fun overall(): IntArray {
+        val s = stats()
+        var seen = 0
+        var mastered = 0
+        var total = 0
+        var answers = 0
+        var right = 0
+        for ((_, q) in allQ()) {
+            val x = st(s, q)
+            total++
+            answers += x[0]
+            right += x[1]
+            if (x[0] > 0) seen++
+            if (x[2] >= 3) mastered++
+        }
+        return intArrayOf(seen, mastered, total, answers, right)
+    }
+
     private fun home() {
         show(null) {
-            addView(tv("Навчання до НМТ", 24f, true))
-            addView(tv("Обери, що вчити", 14f, false, MU))
-            addView(menu("📜 Історія України", "5–11 класи: конспект, діячі, тести") { hist() })
-            for (s in listOf("🇺🇦 Українська мова", "➗ Математика", "🇬🇧 Англійська")) addView(menu(s, "скоро", null))
+            addView(h1("Навчання до НМТ", 30f))
+            addView(tv("Конспект, повторення й тести — все в одному місці", 14f, false, MU))
+            val o = overall()
+            val due = dueCount()
+            val hero = LinearLayout(this@MainActivity)
+            hero.orientation = LinearLayout.VERTICAL
+            hero.setPadding(dp(18), dp(18), dp(18), dp(18))
+            val hg = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF2557D6.toInt(), 0xFF14307A.toInt()))
+            hg.cornerRadius = dp(24).toFloat()
+            hg.setStroke(dp(1), BD)
+            hero.background = hg
+            val hp = lp()
+            hp.topMargin = dp(18)
+            hero.layoutParams = hp
+            val top = LinearLayout(this@MainActivity)
+            top.orientation = LinearLayout.HORIZONTAL
+            top.gravity = Gravity.CENTER_VERTICAL
+            val fl = FrameLayout(this@MainActivity)
+            fl.layoutParams = LinearLayout.LayoutParams(dp(96), dp(96))
+            val ring = RingView(this@MainActivity)
+            ring.color = AC
+            ring.track = 0x33FFFFFF
+            ring.stroke = dp(9).toFloat()
+            fl.addView(ring, FrameLayout.LayoutParams(-1, -1))
+            val frac = if (o[2] == 0) 0f else o[1].toFloat() / o[2]
+            val ct = tv("${(frac * 100).toInt()}%", 22f, true)
+            ct.gravity = Gravity.CENTER
+            fl.addView(ct, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+            ring.animateTo(frac)
+            top.addView(fl)
+            val col = LinearLayout(this@MainActivity)
+            col.orientation = LinearLayout.VERTICAL
+            val cp = LinearLayout.LayoutParams(0, -2, 1f)
+            cp.leftMargin = dp(16)
+            col.layoutParams = cp
+            col.addView(tv("Засвоєно", 13f, false, 0xCCFFFFFF.toInt()))
+            col.addView(tv("${o[1]} з ${o[2]} питань", 20f, true))
+            val note = if (o[0] == 0) "Почни з діагностики — вона покаже, що ти вже знаєш." else "Питання вважається засвоєним після трьох правильних відповідей поспіль."
+            col.addView(tv(note, 12f, false, 0xCCFFFFFF.toInt()))
+            top.addView(col)
+            hero.addView(top)
+            val action = if (due > 0) "Повторити ($due)" else "Пройти діагностику"
+            hero.addView(btn(action) { if (due > 0) review() else diag() })
+            addView(hero)
+
+            val h = tv("Предмети", 20f, true)
+            h.setPadding(0, dp(20), 0, dp(2))
+            addView(h)
+            addView(navRow("📜", ERA[1], "Історія України", "5–11 класи: конспект, діячі, тести") { hist() })
+            for ((e, n) in listOf("🇺🇦" to "Українська мова", "➗" to "Математика", "🇬🇧" to "Англійська")) {
+                addView(navRow(e, MU, n, "скоро", null))
+            }
         }
+    }
+
+    private fun tile(icon: String, color: Int, ttl: String, sub: String, onClick: () -> Unit): LinearLayout {
+        val c = LinearLayout(this)
+        c.orientation = LinearLayout.VERTICAL
+        c.setPadding(dp(14), dp(14), dp(14), dp(14))
+        val p = LinearLayout.LayoutParams(0, -1, 1f)
+        p.setMargins(dp(4), dp(4), dp(4), dp(4))
+        c.layoutParams = p
+        c.addView(badge(icon, tint(color, 0x33), 40, 18f))
+        val t = tv(ttl, 16f, true)
+        t.setPadding(0, dp(10), 0, 0)
+        c.addView(t)
+        c.addView(tv(sub, 12f, false, MU))
+        clickable(c, bg(CARD, BD, 18)) { onClick() }
+        return c
+    }
+
+    private fun tiles(a: LinearLayout, b: LinearLayout): LinearLayout {
+        val r = LinearLayout(this)
+        r.orientation = LinearLayout.HORIZONTAL
+        val p = LinearLayout.LayoutParams(-1, -2)
+        p.topMargin = dp(4)
+        r.layoutParams = p
+        r.addView(a)
+        r.addView(b)
+        return r
+    }
+
+    // Епоха — вузол на лінії часу з кольором і шкалою засвоєння
+    private fun eraRow(i: Int, first: Boolean, last: Boolean, s: JSONObject): LinearLayout {
+        val g = data.getJSONObject(i)
+        val ec = ERA[i % ERA.size]
+        val qs = toList(g.getJSONArray("q"))
+        var mastered = 0
+        for (q in qs) if (st(s, q)[2] >= 3) mastered++
+        val r = LinearLayout(this)
+        r.orientation = LinearLayout.HORIZONTAL
+        r.layoutParams = LinearLayout.LayoutParams(-1, -2)
+        val left = FrameLayout(this)
+        left.layoutParams = LinearLayout.LayoutParams(dp(48), -1)
+        val line = View(this)
+        line.setBackgroundColor(0x33FFFFFF)
+        val lpL = FrameLayout.LayoutParams(dp(2), if (last) dp(32) else -1, Gravity.CENTER_HORIZONTAL)
+        if (first) lpL.topMargin = dp(32)
+        left.addView(line, lpL)
+        val node = badge("${g.getInt("n")}", ec, 36, 15f)
+        node.setTextColor(ON_AC)
+        node.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        val np = FrameLayout.LayoutParams(dp(36), dp(36), Gravity.CENTER_HORIZONTAL or Gravity.TOP)
+        np.topMargin = dp(14)
+        left.addView(node, np)
+        r.addView(left)
+        val c = card()
+        val cp = LinearLayout.LayoutParams(0, -2, 1f)
+        cp.topMargin = dp(6)
+        cp.bottomMargin = dp(2)
+        c.layoutParams = cp
+        c.addView(tv(g.getString("t"), 17f, true))
+        c.addView(tv("${g.getInt("n")} клас · засвоєно $mastered з ${qs.size}", 13f, false, MU))
+        c.addView(bar(if (qs.isEmpty()) 0f else mastered.toFloat() / qs.size, ec))
+        clickable(c, bg(CARD, BD, 18)) { grade(i) }
+        r.addView(c)
+        return r
     }
 
     private fun hist() {
         show({ home() }) {
-            addView(tv("Історія України", 24f, true))
-            addView(site())
+            addView(h1("Історія України"))
+            addView(tv("Обери, з чого почати", 14f, false, MU))
+            val s = stats()
             val d = prefs().getFloat("d", -1f)
-            val sub = if (d < 0) "30 питань з усіх класів" else "Останній результат ≈ ${(100 + d * 100).toInt()} балів"
-            addView(menu("Діагностичний тест", sub) { diag() })
+            val dsub = if (d < 0) "30 питань з усіх епох" else "≈ ${(100 + d * 100).toInt()} балів"
             val due = dueCount()
-            val rsub = if (due == 0) "питання, на яких помилився, повертаються частіше" else "до повторення: $due"
-            addView(menu("🔁 Повторення", rsub) { review() })
-            addView(menu("📊 Статистика", "прогрес за класами й складні питання") { statsScreen() })
-            addView(menu("📌 Усі пам’ятки", "ключові дати всіх класів") { memos() })
-            for (i in 0 until data.length()) {
-                val g = data.getJSONObject(i)
-                addView(menu("${g.getInt("n")} клас — ${pct("g" + g.getInt("n"))}", g.getString("t")) { grade(i) })
-            }
+            val rsub = if (due == 0) "помилки повертаються частіше" else "до повторення: $due"
+            val r1 = tiles(
+                tile("🎯", AC, "Діагностика", dsub) { diag() },
+                tile("🔁", OK, "Повторення", rsub) { review() }
+            )
+            val r2 = tiles(
+                tile("📊", ERA[5], "Статистика", "прогрес і слабкі місця") { statsScreen() },
+                tile("📌", ERA[3], "Пам’ятки", "ключові дати епох") { memos() }
+            )
+            (r1.layoutParams as LinearLayout.LayoutParams).topMargin = dp(14)
+            addView(r1)
+            addView(r2)
+            val h = tv("Епохи", 20f, true)
+            h.setPadding(0, dp(20), 0, dp(6))
+            addView(h)
+            val n = data.length()
+            for (i in 0 until n) addView(eraRow(i, i == 0, i == n - 1, s))
+            addView(site())
         }
     }
 
     private fun grade(i: Int) {
         val g = data.getJSONObject(i)
         show({ hist() }) {
-            addView(tv("${g.getInt("n")} клас: ${g.getString("t")}", 22f, true))
+            val era = ERA[i % ERA.size]
+            val chip = tv("${g.getInt("n")} клас", 13f, true, ON_AC)
+            chip.setPadding(dp(12), dp(4), dp(12), dp(4))
+            chip.background = bg(era, era, 20)
+            chip.layoutParams = LinearLayout.LayoutParams(-2, -2)
+            addView(chip)
+            addView(h1(g.getString("t")))
             addView(memoCard(g))
             val c = card()
             val s = g.getJSONArray("s")
@@ -934,7 +1153,7 @@ class MainActivity : Activity() {
 
     private fun memoCard(g: JSONObject): LinearLayout {
         val c = card()
-        c.background = bg(0xFF3A3220.toInt(), 0xFF6B5B2A.toInt())
+        c.background = bg(0xFF2D2B3A.toInt(), 0x66FFC94D, 18)
         c.addView(tv("📌 Пам’ятка", 17f, true))
         val m = g.getJSONArray("memo")
         for (j in 0 until m.length()) {
@@ -947,7 +1166,7 @@ class MainActivity : Activity() {
 
     private fun memos() {
         show({ hist() }) {
-            addView(tv("📌 Усі пам’ятки", 24f, true))
+            addView(h1("📌 Усі пам’ятки"))
             for (g in toList(data)) {
                 val c = memoCard(g)
                 c.addView(tv("${g.getInt("n")} клас: ${g.getString("t")}", 13f, false, MU), 0)
@@ -970,28 +1189,56 @@ class MainActivity : Activity() {
 
     private val lockRx = Regex("(?iu)усі|всі|жодн|обидв|вище|правильн")
 
+    private class Opt(val row: LinearLayout, val badge: TextView, val label: TextView)
+
     private fun quiz(qs: List<JSONObject>, key: String, title: String, ret: () -> Unit) {
         var k = 0
         var ok = 0
+        val wrong = ArrayList<JSONObject>()
         fun end() {
             val p = ok.toFloat() / qs.size
-            if (key != "r") prefs().edit().putFloat(key, p).apply()
+            if (key != "r" && key != "w") prefs().edit().putFloat(key, p).apply()
             addHistory(title, ok, qs.size)
+            val ringColor = if (p >= 0.7f) OK else if (p >= 0.5f) WARN else BAD
             show(ret) {
-                addView(tv(title, 22f, true))
+                addView(tv(title, 14f, false, MU))
+                addView(h1("Результат"))
                 val c = card()
-                val sc = tv("0 / ${qs.size}", 44f, true)
-                c.addView(sc)
+                c.gravity = Gravity.CENTER_HORIZONTAL
+                val fl = FrameLayout(this@MainActivity)
+                val flp = LinearLayout.LayoutParams(dp(180), dp(180))
+                flp.topMargin = dp(8)
+                flp.bottomMargin = dp(8)
+                fl.layoutParams = flp
+                val ring = RingView(this@MainActivity)
+                ring.color = ringColor
+                ring.track = 0x33FFFFFF
+                ring.stroke = dp(14).toFloat()
+                fl.addView(ring, FrameLayout.LayoutParams(-1, -1))
+                val sc = tv("0 / ${qs.size}", 34f, true)
+                sc.gravity = Gravity.CENTER
+                fl.addView(sc, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+                c.addView(fl)
+                ring.animateTo(p)
                 val va = ValueAnimator.ofInt(0, ok)
-                va.duration = 700
+                va.duration = 900
                 va.addUpdateListener { sc.text = "${it.animatedValue} / ${qs.size}" }
                 va.start()
-                val pts = if (key == "r") "" else " Орієнтовно ≈ ${(100 + p * 100).toInt()} балів зі 200."
-                c.addView(tv("Правильно: ${(p * 100).toInt()}%.$pts", 15f, false, MU))
+                val msg = if (p >= 0.9f) "Блискуче!" else if (p >= 0.7f) "Гарний результат" else if (p >= 0.5f) "Непогано, є що підтягнути" else "Варто повторити конспект"
+                val mt = tv(msg, 20f, true)
+                mt.gravity = Gravity.CENTER
+                c.addView(mt)
+                val pts = if (key == "r" || key == "w") "" else " Орієнтовно ≈ ${(100 + p * 100).toInt()} балів зі 200."
+                val dt = tv("Правильно: ${(p * 100).toInt()}%.$pts", 14f, false, MU)
+                dt.gravity = Gravity.CENTER
+                dt.setPadding(0, dp(4), 0, 0)
+                c.addView(dt)
                 addView(c)
-                addView(tv(if (p < 0.7f) "Варто повторити конспект і спробувати ще раз." else "Гарний результат!", 16f))
-                addView(site())
-                addView(btn("Назад") { ret() })
+                if (wrong.isNotEmpty()) {
+                    addView(btn("Розібрати помилки (${wrong.size})") { quiz(ArrayList(wrong), "w", "Помилки", ret) })
+                }
+                addView(btn("Готово", wrong.isEmpty()) { ret() })
+                if (key != "r" && key != "w") addView(site())
             }
         }
         fun ask() {
@@ -1005,41 +1252,80 @@ class MainActivity : Activity() {
             if (!locked) order.shuffle()
             val a = order.indexOf(a0)
             show(ret) {
-                addView(tv("$title · ${k + 1}/${qs.size}", 14f, false, MU))
-                addView(tv(q.getString("q"), 18f, true))
-                val bs = ArrayList<Button>()
+                val head = LinearLayout(this@MainActivity)
+                head.orientation = LinearLayout.HORIZONTAL
+                val l1 = tv(title, 14f, false, MU)
+                l1.layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+                head.addView(l1)
+                head.addView(tv("${k + 1} / ${qs.size}", 14f, true))
+                addView(head)
+                addView(bar((k + 1).toFloat() / qs.size, AC))
+                val qc = card()
+                qc.addView(tv(q.getString("q"), 20f, true))
+                addView(qc)
+                val opts = ArrayList<Opt>()
+                var answered = false
                 for (j in 0 until o.length()) {
-                    val b = btn(o.getString(order[j]), false) {}
-                    b.setOnClickListener {
-                        if (j == a) ok++
-                        record(q, j == a)
-                        for ((m, x) in bs.withIndex()) {
-                            x.isEnabled = false
+                    val r = LinearLayout(this@MainActivity)
+                    r.orientation = LinearLayout.HORIZONTAL
+                    r.gravity = Gravity.CENTER_VERTICAL
+                    r.setPadding(dp(12), dp(12), dp(14), dp(12))
+                    r.layoutParams = lp()
+                    r.background = ripple(bg(CARD2, BD, 16))
+                    val bd = badge("АБВГДЕ"[j].toString(), tint(Color.WHITE, 0x22), 32, 14f)
+                    r.addView(bd)
+                    val lb = tv(o.getString(order[j]), 16f)
+                    val lpp = LinearLayout.LayoutParams(0, -2, 1f)
+                    lpp.leftMargin = dp(12)
+                    lb.layoutParams = lpp
+                    r.addView(lb)
+                    pressFx(r)
+                    opts.add(Opt(r, bd, lb))
+                    r.setOnClickListener {
+                        if (answered) return@setOnClickListener
+                        answered = true
+                        val good = j == a
+                        if (good) ok++ else wrong.add(q)
+                        record(q, good)
+                        r.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                        for ((m, x) in opts.withIndex()) {
                             if (m == a) {
-                                x.background = bg(OK, OK)
-                                x.setTextColor(Color.WHITE)
-                                x.animate().scaleX(1.05f).scaleY(1.05f).setDuration(150).withEndAction {
-                                    x.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
+                                x.row.background = ripple(bg(tint(OK, 0x33), OK, 16))
+                                x.badge.background = circle(OK)
+                                x.badge.text = "✓"
+                                x.badge.setTextColor(ON_AC)
+                                x.row.animate().scaleX(1.03f).scaleY(1.03f).setDuration(150).withEndAction {
+                                    x.row.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
                                 }.start()
                             } else if (m == j) {
-                                x.background = bg(BAD, BAD)
-                                x.setTextColor(Color.WHITE)
-                                val s = dp(10).toFloat()
-                                ObjectAnimator.ofFloat(x, "translationX", 0f, -s, s, -s / 2, s / 2, 0f).setDuration(350).start()
+                                x.row.background = ripple(bg(tint(BAD, 0x33), BAD, 16))
+                                x.badge.background = circle(BAD)
+                                x.badge.text = "✕"
+                                x.badge.setTextColor(ON_AC)
+                                val sh = dp(10).toFloat()
+                                ObjectAnimator.ofFloat(x.row, "translationX", 0f, -sh, sh, -sh / 2, sh / 2, 0f).setDuration(350).start()
+                            } else {
+                                x.row.animate().alpha(0.45f).setDuration(200).start()
                             }
                         }
                         val ex = q.optString("e", "")
                         if (ex.isNotEmpty()) {
                             val ec = card()
-                            ec.addView(tv("💡 " + ex, 15f, false, MU))
-                            val eb = btn("💡 Пояснення", false) {}
-                            eb.setOnClickListener {
-                                eb.visibility = View.GONE
-                                addView(ec, indexOfChild(eb) + 1)
+                            ec.addView(tv("💡 " + ex, 15f, false, 0xFFD6E0F7.toInt()))
+                            if (!good) {
+                                addView(ec)
                                 ec.alpha = 0f
                                 ec.animate().alpha(1f).setDuration(250).start()
+                            } else {
+                                val eb = btn("Чому так?", false) {}
+                                eb.setOnClickListener {
+                                    eb.visibility = View.GONE
+                                    addView(ec, indexOfChild(eb) + 1)
+                                    ec.alpha = 0f
+                                    ec.animate().alpha(1f).setDuration(250).start()
+                                }
+                                addView(eb)
                             }
-                            addView(eb)
                         }
                         val nb = btn(if (k + 1 < qs.size) "Далі" else "Результат") {
                             k++
@@ -1048,12 +1334,48 @@ class MainActivity : Activity() {
                         nb.alpha = 0f
                         addView(nb)
                         nb.animate().alpha(1f).setDuration(250).start()
+                        root.postDelayed({ root.smoothScrollTo(0, box.height) }, 300)
                     }
-                    bs.add(b)
-                    addView(b)
+                    addView(r)
                 }
             }
         }
         ask()
+    }
+}
+
+// Кільце прогресу, що плавно заповнюється
+class RingView(ctx: Context) : View(ctx) {
+    var color: Int = 0xFFFFC94D.toInt()
+    var track: Int = 0x33FFFFFF
+    var stroke: Float = 24f
+    private var prog = 0f
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rect = RectF()
+
+    fun animateTo(target: Float) {
+        val va = ValueAnimator.ofFloat(0f, target.coerceIn(0f, 1f))
+        va.duration = 900
+        va.interpolator = DecelerateInterpolator()
+        va.addUpdateListener {
+            prog = it.animatedValue as Float
+            invalidate()
+        }
+        va.start()
+    }
+
+    override fun onDraw(c: Canvas) {
+        super.onDraw(c)
+        val pad = stroke / 2f
+        rect.set(pad, pad, width - pad, height - pad)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = stroke
+        paint.strokeCap = Paint.Cap.ROUND
+        paint.color = track
+        c.drawArc(rect, 0f, 360f, false, paint)
+        if (prog > 0f) {
+            paint.color = color
+            c.drawArc(rect, -90f, 360f * prog, false, paint)
+        }
     }
 }
