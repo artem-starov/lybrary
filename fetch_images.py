@@ -3,10 +3,12 @@
 Завантажує всі картинки й відповіді Вікіпедії та кладе їх у assets/img,
 щоб вони були вшиті в додаток і працювали без інтернету з першого запуску.
 Імена файлів = MD5 від URL, так само, як у додатку (MainActivity.cacheName)."""
-import hashlib, json, os, sys, time, urllib.parse, urllib.request
+import hashlib, json, os, sys, time, urllib.error, urllib.parse, urllib.request
 
 OUT = "app/src/main/assets/img"
-UA = "NMTStudyApp/1.0 (student study app; contact: github.com)"
+REPO = os.environ.get("GITHUB_REPOSITORY", "nmt-study-app")
+# Вікіпедія вимагає описовий User-Agent з посиланням на проєкт, інакше може відхиляти запити
+UA = "NMTStudyApp/1.1 (https://github.com/%s; student study app) python-urllib/3" % REPO
 os.makedirs(OUT, exist_ok=True)
 
 
@@ -27,15 +29,17 @@ def commons_url(q):
 
 total = 0
 fails = 0
+streak = 0
 
 
 def get(u):
     """Повертає байти (з диска або з мережі) і зберігає їх під ім'ям md5(url)."""
-    global total, fails
+    global total, fails, streak
     path = os.path.join(OUT, hashlib.md5(u.encode("utf-8")).hexdigest())
     if os.path.exists(path) and os.path.getsize(path) > 0:
         return open(path, "rb").read()
-    for attempt in range(4):
+    reason = "?"
+    for attempt in range(5):
         try:
             req = urllib.request.Request(u, headers={"User-Agent": UA, "Accept": "*/*"})
             with urllib.request.urlopen(req, timeout=30) as r:
@@ -44,12 +48,31 @@ def get(u):
                 with open(path, "wb") as f:
                     f.write(data)
                 total += len(data)
-                time.sleep(0.25)
+                streak = 0
+                time.sleep(0.5)
                 return data
+            reason = "порожня відповідь"
+        except urllib.error.HTTPError as e:
+            reason = "HTTP %d" % e.code
+            if e.code in (404, 400):
+                break
+            wait = 5 * (attempt + 1)
+            try:
+                wait = max(wait, int(e.headers.get("Retry-After", "0")))
+            except Exception:
+                pass
+            time.sleep(min(wait, 60))
+            continue
         except Exception as e:
-            time.sleep(2 * (attempt + 1))
+            reason = type(e).__name__ + ": " + str(e)
+        time.sleep(3 * (attempt + 1))
     fails += 1
-    print("FAIL", u, file=sys.stderr)
+    streak += 1
+    print("FAIL [%s] %s" % (reason, u[:150]), file=sys.stderr)
+    if streak >= 8:
+        print("Забагато помилок поспіль — зупиняюсь. Додаток докачає картинки сам при першому запуску.", file=sys.stderr)
+        print("Готово: %.1f МБ, помилок: %d" % (total / 1048576, fails))
+        sys.exit(0)
     return None
 
 

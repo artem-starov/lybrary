@@ -664,6 +664,16 @@ class MainActivity : Activity() {
 
     private val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
 
+    // Вікіпедія просить описовий User-Agent з посиланням на проєкт
+    private val ua: String by lazy {
+        val r = try {
+            assets.open("repo.txt").bufferedReader().use { it.readText() }.trim()
+        } catch (e: Exception) {
+            "nmt-study-app"
+        }
+        "NMTStudyApp/1.1 (https://github.com/" + r + "; student study app)"
+    }
+
     private fun cacheDirectory(): File {
         val d = File(filesDir, "cache")
         if (!d.exists()) d.mkdirs()
@@ -697,7 +707,7 @@ class MainActivity : Activity() {
                 val c = URL(u).openConnection() as HttpURLConnection
                 c.connectTimeout = 10000
                 c.readTimeout = 15000
-                c.setRequestProperty("User-Agent", "NMTStudyApp/1.0 (student study app; contact: github.com)")
+                c.setRequestProperty("User-Agent", ua)
                 c.setRequestProperty("Accept", "*/*")
                 val code = c.responseCode
                 if (code == 200) {
