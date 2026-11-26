@@ -50,9 +50,6 @@ class MainActivity : Activity() {
     private lateinit var data: JSONArray
     private var back: (() -> Unit)? = null
 
-    @Volatile
-    private var prefetching = false
-
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     override fun onCreate(s: Bundle?) {
@@ -68,6 +65,7 @@ class MainActivity : Activity() {
         setContentView(root)
         home()
         checkUpdate()
+        startPrefetch()
     }
 
     override fun onBackPressed() {
@@ -576,7 +574,6 @@ class MainActivity : Activity() {
                 val g = data.getJSONObject(i)
                 addView(menu("${g.getInt("n")} клас — ${pct("g" + g.getInt("n"))}", g.getString("t")) { grade(i) })
             }
-            addView(menu("⬇️ Офлайн-режим", "завантажити картинки, щоб працювало без інтернету") { offline() })
         }
     }
 
@@ -646,16 +643,15 @@ class MainActivity : Activity() {
                 val pc = card()
                 val piv = imgView()
                 pc.addView(piv)
-                portrait(piv, o.getString("name"))
+                val pcap = tv("Фото: Вікіпедія", 11f, false, MU)
+                pcap.visibility = View.GONE
+                pc.addView(pcap)
+                portrait(piv, o.getString("name"), pcap)
                 pc.addView(tv(o.getString("name"), 17f, true))
                 pc.addView(tv(o.getString("years") + " · " + o.getString("role"), 14f, false, MU))
                 val d = tv(o.getString("desc"), 16f)
                 d.setPadding(0, dp(6), 0, 0)
                 pc.addView(d)
-                val url = "https://uk.wikipedia.org/w/index.php?search=" + Uri.encode(o.getString("name"))
-                pc.addView(btn("Портрет і біографія (Вікіпедія)", false) {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                })
                 addView(pc)
             }
             addView(btn("Здати тест") {
@@ -674,25 +670,26 @@ class MainActivity : Activity() {
         return d
     }
 
-    private fun cacheFile(u: String): File {
+    private fun cacheName(u: String): String {
         val h = MessageDigest.getInstance("MD5").digest(u.toByteArray(Charsets.UTF_8))
         val sb = StringBuilder()
         for (x in h) sb.append("%02x".format(x.toInt() and 0xff))
-        return File(cacheDirectory(), sb.toString())
+        return sb.toString()
     }
 
-    private fun cacheSize(): Long {
-        var n = 0L
-        val fs = cacheDirectory().listFiles() ?: return 0L
-        for (f in fs) n += f.length()
-        return n
-    }
+    private fun cacheFile(u: String): File = File(cacheDirectory(), cacheName(u))
 
     // Спочатку шукає на диску, інакше завантажує й зберігає. Далі все працює без інтернету.
     private fun http(u: String): ByteArray? {
         val cf = cacheFile(u)
         try {
             if (cf.exists() && cf.length() > 0) return cf.readBytes()
+        } catch (e: Exception) {
+        }
+        // Картинки й відповіді Вікіпедії, вшиті в додаток під час збірки (assets/img)
+        try {
+            val r = assets.open("img/" + cacheName(u)).use { it.readBytes() }
+            if (r.isNotEmpty()) return r
         } catch (e: Exception) {
         }
         for (t in 0..1) {
@@ -761,7 +758,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun portrait(iv: ImageView, name: String) {
+    private fun portrait(iv: ImageView, name: String, cap: View? = null) {
         pool.execute {
             val b = http(wikiUrl(name)) ?: return@execute
             try {
@@ -772,7 +769,7 @@ class MainActivity : Activity() {
                     val th = p.optJSONObject("thumbnail")
                     if (th != null) {
                         val page = "https://uk.wikipedia.org/wiki/" + Uri.encode(p.getString("title").replace(' ', '_'))
-                        runOnUiThread { setImg(iv, th.getString("source"), page) }
+                        runOnUiThread { setImg(iv, th.getString("source"), page, cap) }
                         break
                     }
                 }
@@ -830,10 +827,31 @@ class MainActivity : Activity() {
         startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
     }
 
-    // ───────────── Офлайн-режим ─────────────
+    // ───────────── Тихе завантаження картинок ─────────────
 
-    // Завантажує всі картинки й відповіді Вікіпедії в кеш. Виконується у фоновому потоці.
-    private fun prefetch(progress: (Int, Int) -> Unit) {
+    private fun curVersion(): Int {
+        @Suppress("DEPRECATION")
+        return packageManager.getPackageInfo(packageName, 0).versionCode
+    }
+
+    // При першому запуску кожної версії у фоні докачує все, чого ще немає на телефоні. Користувач нічого не натискає.
+    private fun startPrefetch() {
+        val sys = getSharedPreferences("sys", 0)
+        val cur = try {
+            curVersion()
+        } catch (e: Exception) {
+            return
+        }
+        if (sys.getInt("pf", 0) >= cur) return
+        Thread {
+            val fails = prefetch()
+            if (fails == 0) sys.edit().putInt("pf", cur).apply()
+        }.start()
+    }
+
+    // Повертає кількість невдалих завантажень (0 = усе є на телефоні).
+    private fun prefetch(): Int {
+        var fails = 0
         val wq = ArrayList<String>()
         val mq = ArrayList<String>()
         for (g in toList(data)) {
@@ -846,30 +864,31 @@ class MainActivity : Activity() {
             val m = g.optJSONArray("maps")
             if (m != null) for (i in 0 until m.length()) mq.add(m.getJSONArray(i).getString(1))
         }
-        val total = wq.size + mq.size
-        var done = 0
-        for (q in wq) {
+        for (q in wq + mq) {
             try {
                 val b = http(wikiUrl(q))
-                if (b != null) {
+                if (b == null) {
+                    fails++
+                } else {
                     val pages = JSONObject(String(b, Charsets.UTF_8)).optJSONObject("query")?.optJSONObject("pages")
                     if (pages != null) {
                         val keys = pages.keys()
                         while (keys.hasNext()) {
                             val src = pages.getJSONObject(keys.next()).optJSONObject("thumbnail")?.optString("source")
-                            if (!src.isNullOrEmpty()) http(src)
+                            if (!src.isNullOrEmpty() && http(src) == null) fails++
                         }
                     }
                 }
             } catch (e: Exception) {
+                fails++
             }
-            done++
-            progress(done, total)
         }
         for (q in mq) {
             try {
                 val b = http(commonsUrl(q))
-                if (b != null) {
+                if (b == null) {
+                    fails++
+                } else {
                     val pages = JSONObject(String(b, Charsets.UTF_8)).optJSONObject("query")?.optJSONObject("pages")
                     if (pages != null) {
                         val list = ArrayList<JSONObject>()
@@ -882,53 +901,15 @@ class MainActivity : Activity() {
                             if (!ii.optString("mime").startsWith("image/")) continue
                             if (n >= 3) break
                             n++
-                            http(ii.optString("thumburl", ii.optString("url")))
+                            if (http(ii.optString("thumburl", ii.optString("url"))) == null) fails++
                         }
                     }
                 }
             } catch (e: Exception) {
+                fails++
             }
-            done++
-            progress(done, total)
         }
-    }
-
-    private fun mb(n: Long): String = String.format(Locale.US, "%.1f МБ", n / 1048576.0)
-
-    private fun offline() {
-        show({ hist() }) {
-            addView(tv("⬇️ Офлайн-режим", 24f, true))
-            val c = card()
-            c.addView(tv("Картинки, карти й портрети один раз завантажуються й зберігаються в пам’яті телефона. Далі вони відкриваються без інтернету. Перше завантаження краще робити через Wi-Fi (кілька десятків МБ).", 15f))
-            val info = tv("У пам’яті зараз: " + mb(cacheSize()), 14f, false, MU)
-            info.setPadding(0, dp(8), 0, 0)
-            c.addView(info)
-            addView(c)
-            val startBtn = btn("Завантажити все") {}
-            startBtn.setOnClickListener {
-                if (prefetching) return@setOnClickListener
-                prefetching = true
-                startBtn.isEnabled = false
-                info.text = "Завантаження…"
-                Thread {
-                    prefetch { d, t ->
-                        runOnUiThread { info.text = "Завантажено $d з $t · " + mb(cacheSize()) }
-                    }
-                    prefetching = false
-                    runOnUiThread {
-                        info.text = "Готово ✅ У пам’яті: " + mb(cacheSize())
-                        startBtn.isEnabled = true
-                    }
-                }.start()
-            }
-            addView(startBtn)
-            addView(btn("Очистити кеш", false) {
-                val fs = cacheDirectory().listFiles()
-                if (fs != null) for (f in fs) f.delete()
-                info.text = "У пам’яті зараз: " + mb(cacheSize())
-            })
-            addView(btn("Назад", false) { hist() })
-        }
+        return fails
     }
 
     // ───────────── Контент ─────────────
