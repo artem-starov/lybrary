@@ -9,8 +9,17 @@ android {
         applicationId = "com.nmt.navchannia"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = (findProperty("vCode") as String?)?.toInt() ?: 2
+        versionName = (findProperty("vName") as String?) ?: "1.1"
+    }
+    // Постійний ключ підпису: нові версії встановлюються поверх старих без втрати прогресу
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("nmt.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
