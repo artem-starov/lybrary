@@ -22,11 +22,22 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.Settings
+import android.text.InputType
+import android.text.SpannableString
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.TextPaint
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -452,12 +463,13 @@ class MainActivity : Activity() {
         return n
     }
 
-    private fun review() {
+    private fun review() = reviewOf(allQ().map { it.second }) { hist() }
+
+    private fun reviewOf(pool: List<JSONObject>, ret: () -> Unit) {
         val s = stats()
-        val all = allQ()
         var due = 0
         val cand = ArrayList<Pair<JSONObject, Double>>()
-        for ((_, q) in all) {
+        for (q in pool) {
             val x = st(s, q)
             if (x[0] > 0 && x[2] < 3) due++
             val w = when {
@@ -468,12 +480,12 @@ class MainActivity : Activity() {
             cand.add(Pair(q, w))
         }
         if (due == 0) {
-            show({ hist() }) {
+            show({ ret() }) {
                 addView(h1("🔁 Повторення"))
                 val c = card()
-                c.addView(tv("Поки що нічого повторювати. Пройди діагностичний тест або тест по класу — питання, на яких помилишся, потрапляють сюди й повертаються частіше.", 16f))
+                c.addView(tv("Поки що нічого повторювати. Пройди тест — питання, на яких помилишся, потрапляють сюди й повертаються частіше.", 16f))
                 addView(c)
-                addView(btn("Назад") { hist() })
+                addView(btn("Назад") { ret() })
             }
             return
         }
@@ -493,7 +505,7 @@ class MainActivity : Activity() {
             }
             picked.add(cand.removeAt(idx).first)
         }
-        quiz(picked, "r", "Повторення") { hist() }
+        quiz(picked, "r", "Повторення", ret)
     }
 
     private fun bar(p: Float, color: Int): LinearLayout {
@@ -691,7 +703,8 @@ class MainActivity : Activity() {
             h.setPadding(0, dp(20), 0, dp(2))
             addView(h)
             addView(navRow("📜", ERA[1], "Історія України", "5–11 класи: конспект, діячі, тести") { hist() })
-            for ((e, n) in listOf("🇺🇦" to "Українська мова", "➗" to "Математика", "🇬🇧" to "Англійська")) {
+            addView(navRow("🇺🇦", ERA[0], "Українська мова", "правила, тести, наголоси, фразеологізми") { ukrHome() })
+            for ((e, n) in listOf("➗" to "Математика", "🇬🇧" to "Англійська")) {
                 addView(navRow(e, MU, n, "скоро", null))
             }
         }
@@ -1187,11 +1200,505 @@ class MainActivity : Activity() {
         quiz(l.shuffled(), "d", "Діагностика") { hist() }
     }
 
+    // ───────────── Українська мова ─────────────
+
+    private val ukr: JSONObject by lazy {
+        JSONObject(assets.open("ukr.json").bufferedReader().use { it.readText() })
+    }
+
+    private val VOW = "аеєиіїоуюя"
+
+    private fun typed(a: JSONArray?, t: String): List<JSONObject> {
+        val l = ArrayList<JSONObject>()
+        if (a != null) {
+            for (i in 0 until a.length()) {
+                val o = JSONObject(a.getJSONObject(i).toString())
+                if (!o.has("t")) o.put("t", t)
+                l.add(o)
+            }
+        }
+        return l
+    }
+
+    private fun secQ(i: Int): List<JSONObject> {
+        val s = ukr.getJSONArray("sections").getJSONObject(i)
+        return typed(s.optJSONArray("q"), "c") + typed(s.optJSONArray("m"), "m") + typed(s.optJSONArray("w"), "w")
+    }
+
+    private fun stressWords(): List<Pair<String, Int>> {
+        val a = ukr.getJSONArray("stress")
+        val l = ArrayList<Pair<String, Int>>()
+        for (i in 0 until a.length()) {
+            val w = a.getString(i)
+            l.add(Pair(w.lowercase(), w.indexOfFirst { it.isUpperCase() }))
+        }
+        return l
+    }
+
+    private fun stressQ(w: String, i: Int): JSONObject {
+        val o = JSONObject()
+        o.put("t", "s")
+        o.put("q", "Постав наголос: " + w)
+        o.put("w", w)
+        o.put("i", i)
+        o.put("e", "Правильно: " + w.substring(0, i) + w[i].uppercaseChar() + w.substring(i + 1))
+        return o
+    }
+
+    private fun phrases(): List<Pair<String, String>> {
+        val a = ukr.getJSONArray("phr")
+        val l = ArrayList<Pair<String, String>>()
+        for (i in 0 until a.length()) {
+            val p = a.getJSONArray(i)
+            l.add(Pair(p.getString(0), p.getString(1)))
+        }
+        return l
+    }
+
+    private fun phrQ(i: Int, all: List<Pair<String, String>>): JSONObject {
+        val p = all[i]
+        val others = ArrayList<String>()
+        for ((k, x) in all.withIndex()) if (k != i) others.add(x.second)
+        others.shuffle()
+        val opts = ArrayList<String>(others.take(3))
+        opts.add(p.second)
+        opts.shuffle()
+        val o = JSONObject()
+        o.put("q", "Що означає фразеологізм «" + p.first + "»?")
+        o.put("o", JSONArray(opts))
+        o.put("a", opts.indexOf(p.second))
+        o.put("e", "«" + p.first + "» — " + p.second + ".")
+        return o
+    }
+
+    private fun phrMatch(all: List<Pair<String, String>>): JSONObject {
+        val sh = ArrayList<Pair<String, String>>(all)
+        sh.shuffle()
+        val pick = sh.take(4)
+        val extra = sh[4].second
+        val opts = ArrayList<String>()
+        for (p in pick) opts.add(p.second)
+        opts.add(extra)
+        opts.shuffle()
+        val l = JSONArray()
+        val a = JSONArray()
+        for (p in pick) {
+            l.put(p.first)
+            a.put(opts.indexOf(p.second))
+        }
+        val o = JSONObject()
+        o.put("t", "m")
+        o.put("nr", true)
+        o.put("q", "Установіть відповідність між фразеологізмом (1–4) та його значенням (А–Д).")
+        o.put("l", l)
+        o.put("r", JSONArray(opts))
+        o.put("a", a)
+        o.put("e", "")
+        return o
+    }
+
+    // Усі завдання з української мови (стабільні за текстом, тому статистика зберігається)
+    private fun ukrPool(): List<JSONObject> {
+        val l = ArrayList<JSONObject>()
+        val n = ukr.getJSONArray("sections").length()
+        for (i in 0 until n) l.addAll(secQ(i))
+        for ((w, i) in stressWords()) l.add(stressQ(w, i))
+        val ph = phrases()
+        for (i in ph.indices) l.add(phrQ(i, ph))
+        return l
+    }
+
+    private fun ukrDue(): Int {
+        val s = stats()
+        var n = 0
+        for (q in ukrPool()) {
+            val x = st(s, q)
+            if (x[0] > 0 && x[2] < 3) n++
+        }
+        return n
+    }
+
+    private fun sectionTitle(text: String): TextView {
+        val h = tv(text, 20f, true)
+        h.setPadding(0, dp(20), 0, dp(6))
+        return h
+    }
+
+    private fun siteU(): LinearLayout {
+        val c = card()
+        c.addView(tv("ℹ️ Для пробного проходження НМТ з української мови користуйся сайтом zno.osvita.ua:", 14f, false, MU))
+        c.addView(btn("Тренувальні варіанти НМТ") { open("https://zno.osvita.ua/ukrmova/nmt.html") })
+        c.addView(btn("Завдання за темами", false) { open("https://zno.osvita.ua/ukrainian/tema.html") })
+        return c
+    }
+
+    private fun ukrHome() {
+        show({ home() }) {
+            addView(h1("Українська мова"))
+            addView(tv("Правила, тести як на НМТ, наголоси й фразеологізми", 14f, false, MU))
+            val due = ukrDue()
+            val rsub = if (due == 0) "помилки повертаються частіше" else "до повторення: $due"
+            val r1 = tiles(
+                tile("🎯", AC, "Змішаний тест", "20 завдань, як на НМТ") { ukrMixed() },
+                tile("🔁", OK, "Повторення", rsub) { reviewOf(ukrPool()) { ukrHome() } }
+            )
+            val r2 = tiles(
+                tile("🔊", ERA[5], "Наголоси", "словник і тренажер") { ukrStress() },
+                tile("💬", ERA[3], "Фразеологізми", "значення й тренажер") { ukrPhr() }
+            )
+            (r1.layoutParams as LinearLayout.LayoutParams).topMargin = dp(14)
+            addView(r1)
+            addView(r2)
+            addView(sectionTitle("Розділи програми"))
+            val secs = ukr.getJSONArray("sections")
+            for (i in 0 until secs.length()) {
+                val sec = secs.getJSONObject(i)
+                val v = prefs().getFloat("u_" + sec.getString("id"), -1f)
+                val sub = if (v < 0) "правила, тест, вправи" else "останній тест: ${(v * 100).toInt()}%"
+                addView(navRow(sec.getString("ic"), ERA[i % ERA.size], sec.getString("t"), sub) { ukrSection(i) })
+            }
+            addView(siteU())
+        }
+    }
+
+    private fun ukrMixed() {
+        val pool = ukrPool()
+        val c = pool.filter { it.optString("t", "c") == "c" && !it.has("nr") }.shuffled().take(12)
+        val sx = pool.filter { it.optString("t") == "s" }.shuffled().take(3)
+        val w = pool.filter { it.optString("t") == "w" }.shuffled().take(2)
+        val m = pool.filter { it.optString("t") == "m" }.shuffled().take(3)
+        quiz(c + sx + w + m, "u", "Змішаний тест") { ukrHome() }
+    }
+
+    private fun ukrSection(i: Int) {
+        val sec = ukr.getJSONArray("sections").getJSONObject(i)
+        val era = ERA[i % ERA.size]
+        show({ ukrHome() }) {
+            val chip = tv("Розділ ${i + 1}", 13f, true, ON_AC)
+            chip.setPadding(dp(12), dp(4), dp(12), dp(4))
+            chip.background = bg(era, era, 20)
+            chip.layoutParams = LinearLayout.LayoutParams(-2, -2)
+            addView(chip)
+            addView(h1(sec.getString("t")))
+            addView(memoCard(sec))
+            addView(sectionTitle("Правила"))
+            val rc = card()
+            val rules = sec.getJSONArray("rules")
+            for (j in 0 until rules.length()) {
+                val t = tv("• " + rules.getString(j), 15f)
+                t.setPadding(0, dp(5), 0, dp(5))
+                rc.addView(t)
+            }
+            addView(rc)
+            val qs = secQ(i)
+            val tests = qs.filter { it.optString("t") != "w" }
+            val writes = qs.filter { it.optString("t") == "w" }
+            addView(btn("Тест розділу (${tests.size} завдань)") {
+                quiz(tests.shuffled(), "u_" + sec.getString("id"), sec.getString("t")) { ukrSection(i) }
+            })
+            addView(btn("Вправи: впиши відповідь (${writes.size})", false) {
+                quiz(writes.shuffled(), "uw", "Вправи: " + sec.getString("t")) { ukrSection(i) }
+            })
+            addView(btn("Назад", false) { ukrHome() })
+        }
+    }
+
+    private fun ukrStress() {
+        show({ ukrHome() }) {
+            addView(h1("Наголоси"))
+            val words = stressWords()
+            val info = card()
+            info.addView(tv("${words.size} слів, у яких найчастіше помиляються. У тренажері натисни наголошену голосну.", 15f))
+            addView(info)
+            addView(btn("Тренувати наголоси (15)") {
+                quiz(words.shuffled().take(15).map { stressQ(it.first, it.second) }, "us", "Наголоси") { ukrStress() }
+            })
+            addView(sectionTitle("Словник"))
+            val sb = SpannableStringBuilder()
+            val raw = ukr.getJSONArray("stress")
+            for (j in 0 until raw.length()) {
+                val w = raw.getString(j)
+                val start = sb.length
+                sb.append(w)
+                val ui = w.indexOfFirst { it.isUpperCase() }
+                if (ui >= 0) {
+                    sb.setSpan(ForegroundColorSpan(AC), start + ui, start + ui + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    sb.setSpan(StyleSpan(Typeface.BOLD), start + ui, start + ui + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                if (j < raw.length() - 1) sb.append("   ·   ")
+            }
+            val dc = card()
+            val dt = tv("", 18f)
+            dt.setLineSpacing(0f, 1.35f)
+            dt.text = sb
+            dc.addView(dt)
+            addView(dc)
+            addView(tv("Золота велика літера — наголошена голосна.", 12f, false, MU))
+            addView(btn("Назад", false) { ukrHome() })
+        }
+    }
+
+    private fun ukrPhr() {
+        show({ ukrHome() }) {
+            addView(h1("Фразеологізми"))
+            val ph = phrases()
+            addView(btn("Тренувати (10 завдань)") {
+                val idx = ph.indices.shuffled().take(8)
+                val l = ArrayList<JSONObject>()
+                for (i in idx) l.add(phrQ(i, ph))
+                l.add(phrMatch(ph))
+                l.add(phrMatch(ph))
+                quiz(l, "up", "Фразеологізми") { ukrPhr() }
+            })
+            addView(sectionTitle("Словник"))
+            for ((p, m) in ph) {
+                val c = card()
+                c.addView(tv(p, 17f, true))
+                c.addView(tv(m, 14f, false, MU))
+                addView(c)
+            }
+            addView(btn("Назад", false) { ukrHome() })
+        }
+    }
+
+    // ───────────── Тест ─────────────
+
     private val lockRx = Regex("(?iu)усі|всі|жодн|обидв|вище|правильн")
 
     private class Opt(val row: LinearLayout, val badge: TextView, val label: TextView)
 
+    private fun norm(s: String): String =
+        s.trim().lowercase().replace("’", "'").replace("ʼ", "'").replace("`", "'").replace(Regex("\\s+"), " ")
+
+    private fun hideKb(v: View) {
+        try {
+            val im = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            im.hideSoftInputFromWindow(v.windowToken, 0)
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun renderMcq(q: JSONObject, after: (Boolean, String) -> Unit) {
+        val o = q.getJSONArray("o")
+        val a0 = q.getInt("a")
+        val order = ArrayList<Int>()
+        for (j in 0 until o.length()) order.add(j)
+        var locked = false
+        for (j in 0 until o.length()) if (lockRx.containsMatchIn(o.getString(j))) locked = true
+        if (!locked) order.shuffle()
+        val a = order.indexOf(a0)
+        val opts = ArrayList<Opt>()
+        var answered = false
+        for (j in 0 until o.length()) {
+            val r = LinearLayout(this)
+            r.orientation = LinearLayout.HORIZONTAL
+            r.gravity = Gravity.CENTER_VERTICAL
+            r.setPadding(dp(12), dp(12), dp(14), dp(12))
+            r.layoutParams = lp()
+            r.background = ripple(bg(CARD2, BD, 16))
+            val bd = badge("АБВГДЕ"[j].toString(), tint(Color.WHITE, 0x22), 32, 14f)
+            r.addView(bd)
+            val lb = tv(o.getString(order[j]), 16f)
+            val lpp = LinearLayout.LayoutParams(0, -2, 1f)
+            lpp.leftMargin = dp(12)
+            lb.layoutParams = lpp
+            r.addView(lb)
+            pressFx(r)
+            opts.add(Opt(r, bd, lb))
+            r.setOnClickListener {
+                if (answered) return@setOnClickListener
+                answered = true
+                val good = j == a
+                for ((m, x) in opts.withIndex()) {
+                    if (m == a) {
+                        x.row.background = ripple(bg(tint(OK, 0x33), OK, 16))
+                        x.badge.background = circle(OK)
+                        x.badge.text = "✓"
+                        x.badge.setTextColor(ON_AC)
+                        x.row.animate().scaleX(1.03f).scaleY(1.03f).setDuration(150).withEndAction {
+                            x.row.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
+                        }.start()
+                    } else if (m == j) {
+                        x.row.background = ripple(bg(tint(BAD, 0x33), BAD, 16))
+                        x.badge.background = circle(BAD)
+                        x.badge.text = "✕"
+                        x.badge.setTextColor(ON_AC)
+                        val sh = dp(10).toFloat()
+                        ObjectAnimator.ofFloat(x.row, "translationX", 0f, -sh, sh, -sh / 2, sh / 2, 0f).setDuration(350).start()
+                    } else {
+                        x.row.animate().alpha(0.45f).setDuration(200).start()
+                    }
+                }
+                after(good, "")
+            }
+            box.addView(r)
+        }
+    }
+
+    // Відповідність: 4 рядки, 5 варіантів (А–Д), як на НМТ
+    private fun renderMatch(q: JSONObject, after: (Boolean, String) -> Unit) {
+        val l = q.getJSONArray("l")
+        val r = q.getJSONArray("r")
+        val a = q.getJSONArray("a")
+        val letters = "АБВГД"
+        val oc = card()
+        for (j in 0 until r.length()) {
+            val t = tv("${letters[j]}   ${r.getString(j)}", 15f)
+            t.setPadding(0, dp(3), 0, dp(3))
+            oc.addView(t)
+        }
+        box.addView(oc)
+        val sel = IntArray(l.length()) { -1 }
+        val chips = ArrayList<ArrayList<TextView>>()
+        var done = false
+        for (i in 0 until l.length()) {
+            val rc = card()
+            rc.addView(tv("${i + 1}. ${l.getString(i)}", 16f))
+            val rowc = LinearLayout(this)
+            rowc.orientation = LinearLayout.HORIZONTAL
+            val rp = LinearLayout.LayoutParams(-2, -2)
+            rp.topMargin = dp(10)
+            rowc.layoutParams = rp
+            val mine = ArrayList<TextView>()
+            for (j in 0 until r.length()) {
+                val ch = TextView(this)
+                ch.text = letters[j].toString()
+                ch.gravity = Gravity.CENTER
+                ch.textSize = 16f
+                ch.setTextColor(TX)
+                ch.background = circle(tint(Color.WHITE, 0x22))
+                val cp = LinearLayout.LayoutParams(dp(44), dp(44))
+                cp.rightMargin = dp(8)
+                ch.layoutParams = cp
+                ch.setOnClickListener {
+                    if (done) return@setOnClickListener
+                    sel[i] = j
+                    for ((m, c2) in mine.withIndex()) {
+                        c2.background = circle(if (m == j) AC else tint(Color.WHITE, 0x22))
+                        c2.setTextColor(if (m == j) ON_AC else TX)
+                    }
+                }
+                mine.add(ch)
+                rowc.addView(ch)
+            }
+            chips.add(mine)
+            rc.addView(rowc)
+            box.addView(rc)
+        }
+        val check = btn("Перевірити") {}
+        check.setOnClickListener {
+            if (done) return@setOnClickListener
+            if (sel.any { it < 0 }) {
+                Toast.makeText(this@MainActivity, "Обери відповідь у кожному рядку", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            done = true
+            var good = true
+            val keyTxt = StringBuilder()
+            for (i in sel.indices) {
+                val c = a.getInt(i)
+                if (sel[i] == c) {
+                    chips[i][c].background = circle(OK)
+                    chips[i][c].setTextColor(ON_AC)
+                } else {
+                    good = false
+                    chips[i][sel[i]].background = circle(BAD)
+                    chips[i][sel[i]].setTextColor(ON_AC)
+                    chips[i][c].background = circle(OK)
+                    chips[i][c].setTextColor(ON_AC)
+                }
+                keyTxt.append("${i + 1}–${letters[c]}   ")
+            }
+            check.visibility = View.GONE
+            after(good, if (good) "" else "Правильно: " + keyTxt.toString().trim())
+        }
+        box.addView(check)
+    }
+
+    // Вписування відповіді (для запам'ятовування; на справжньому НМТ таких завдань немає)
+    private fun renderWrite(q: JSONObject, after: (Boolean, String) -> Unit) {
+        val et = EditText(this)
+        et.hint = "Твоя відповідь"
+        et.setHintTextColor(MU)
+        et.setTextColor(TX)
+        et.textSize = 18f
+        et.isSingleLine = true
+        et.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        et.setPadding(dp(16), dp(14), dp(16), dp(14))
+        et.background = bg(CARD2, BD, 16)
+        et.layoutParams = lp()
+        box.addView(et)
+        var done = false
+        val check = btn("Перевірити") {}
+        check.setOnClickListener {
+            if (done) return@setOnClickListener
+            val u = norm(et.text.toString())
+            if (u.isEmpty()) {
+                Toast.makeText(this@MainActivity, "Впиши відповідь", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            done = true
+            val ans = q.getJSONArray("ans")
+            var good = false
+            for (i in 0 until ans.length()) if (norm(ans.getString(i)) == u) good = true
+            et.isEnabled = false
+            val col = if (good) OK else BAD
+            et.background = bg(tint(col, 0x33), col, 16)
+            hideKb(et)
+            check.visibility = View.GONE
+            after(good, if (good) "" else "Правильна відповідь: " + ans.getString(0))
+        }
+        box.addView(check)
+    }
+
+    // Наголос: натисни наголошену голосну
+    private fun renderStress(q: JSONObject, after: (Boolean, String) -> Unit) {
+        val w = q.getString("w")
+        val idx = q.getInt("i")
+        val c = card()
+        c.gravity = Gravity.CENTER_HORIZONTAL
+        val hint = tv("Натисни наголошену голосну", 13f, false, MU)
+        hint.gravity = Gravity.CENTER
+        c.addView(hint)
+        val wt = TextView(this)
+        wt.textSize = 38f
+        wt.typeface = Typeface.create("serif", Typeface.BOLD)
+        wt.gravity = Gravity.CENTER
+        wt.setTextColor(TX)
+        wt.setPadding(0, dp(14), 0, dp(14))
+        val sp = SpannableString(w)
+        var done = false
+        for (i in w.indices) {
+            if (VOW.indexOf(w[i]) >= 0) {
+                sp.setSpan(object : ClickableSpan() {
+                    override fun onClick(widget: View) {
+                        if (done) return
+                        done = true
+                        val good = i == idx
+                        wt.text = w.substring(0, idx + 1) + "\u0301" + w.substring(idx + 1)
+                        wt.setTextColor(if (good) OK else BAD)
+                        after(good, "")
+                    }
+
+                    override fun updateDrawState(ds: TextPaint) {
+                        ds.color = AC
+                        ds.isUnderlineText = true
+                    }
+                }, i, i + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
+        wt.text = sp
+        wt.movementMethod = LinkMovementMethod.getInstance()
+        wt.highlightColor = Color.TRANSPARENT
+        c.addView(wt)
+        box.addView(c)
+    }
+
     private fun quiz(qs: List<JSONObject>, key: String, title: String, ret: () -> Unit) {
+        if (qs.isEmpty()) {
+            Toast.makeText(this, "Немає завдань", Toast.LENGTH_SHORT).show()
+            return
+        }
         var k = 0
         var ok = 0
         val wrong = ArrayList<JSONObject>()
@@ -1200,6 +1707,7 @@ class MainActivity : Activity() {
             if (key != "r" && key != "w") prefs().edit().putFloat(key, p).apply()
             addHistory(title, ok, qs.size)
             val ringColor = if (p >= 0.7f) OK else if (p >= 0.5f) WARN else BAD
+            val isUkr = key.startsWith("u")
             show(ret) {
                 addView(tv(title, 14f, false, MU))
                 addView(h1("Результат"))
@@ -1224,11 +1732,12 @@ class MainActivity : Activity() {
                 va.duration = 900
                 va.addUpdateListener { sc.text = "${it.animatedValue} / ${qs.size}" }
                 va.start()
-                val msg = if (p >= 0.9f) "Блискуче!" else if (p >= 0.7f) "Гарний результат" else if (p >= 0.5f) "Непогано, є що підтягнути" else "Варто повторити конспект"
+                val msg = if (p >= 0.9f) "Блискуче!" else if (p >= 0.7f) "Гарний результат" else if (p >= 0.5f) "Непогано, є що підтягнути" else "Варто повторити правила"
                 val mt = tv(msg, 20f, true)
                 mt.gravity = Gravity.CENTER
                 c.addView(mt)
-                val pts = if (key == "r" || key == "w") "" else " Орієнтовно ≈ ${(100 + p * 100).toInt()} балів зі 200."
+                val noPts = key == "r" || key == "w" || isUkr
+                val pts = if (noPts) "" else " Орієнтовно ≈ ${(100 + p * 100).toInt()} балів зі 200."
                 val dt = tv("Правильно: ${(p * 100).toInt()}%.$pts", 14f, false, MU)
                 dt.gravity = Gravity.CENTER
                 dt.setPadding(0, dp(4), 0, 0)
@@ -1238,19 +1747,44 @@ class MainActivity : Activity() {
                     addView(btn("Розібрати помилки (${wrong.size})") { quiz(ArrayList(wrong), "w", "Помилки", ret) })
                 }
                 addView(btn("Готово", wrong.isEmpty()) { ret() })
-                if (key != "r" && key != "w") addView(site())
+                if (isUkr) addView(siteU()) else if (key != "r" && key != "w") addView(site())
             }
         }
         fun ask() {
             val q = qs[k]
-            val o = q.getJSONArray("o")
-            val a0 = q.getInt("a")
-            val order = ArrayList<Int>()
-            for (j in 0 until o.length()) order.add(j)
-            var locked = false
-            for (j in 0 until o.length()) if (lockRx.containsMatchIn(o.getString(j))) locked = true
-            if (!locked) order.shuffle()
-            val a = order.indexOf(a0)
+            val t = q.optString("t", "c")
+            val after: (Boolean, String) -> Unit = { good, extra ->
+                if (good) ok++ else wrong.add(q)
+                if (!q.optBoolean("nr", false)) record(q, good)
+                box.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                val ex = (q.optString("e", "") + (if (extra.isNotEmpty()) "\n" + extra else "")).trim()
+                if (ex.isNotEmpty()) {
+                    val ec = card()
+                    ec.addView(tv("💡 " + ex, 15f, false, 0xFFD6E0F7.toInt()))
+                    if (!good) {
+                        box.addView(ec)
+                        ec.alpha = 0f
+                        ec.animate().alpha(1f).setDuration(250).start()
+                    } else {
+                        val eb = btn("Чому так?", false) {}
+                        eb.setOnClickListener {
+                            eb.visibility = View.GONE
+                            box.addView(ec, box.indexOfChild(eb) + 1)
+                            ec.alpha = 0f
+                            ec.animate().alpha(1f).setDuration(250).start()
+                        }
+                        box.addView(eb)
+                    }
+                }
+                val nb = btn(if (k + 1 < qs.size) "Далі" else "Результат") {
+                    k++
+                    if (k < qs.size) ask() else end()
+                }
+                nb.alpha = 0f
+                box.addView(nb)
+                nb.animate().alpha(1f).setDuration(250).start()
+                root.postDelayed({ root.smoothScrollTo(0, box.height) }, 300)
+            }
             show(ret) {
                 val head = LinearLayout(this@MainActivity)
                 head.orientation = LinearLayout.HORIZONTAL
@@ -1263,80 +1797,11 @@ class MainActivity : Activity() {
                 val qc = card()
                 qc.addView(tv(q.getString("q"), 20f, true))
                 addView(qc)
-                val opts = ArrayList<Opt>()
-                var answered = false
-                for (j in 0 until o.length()) {
-                    val r = LinearLayout(this@MainActivity)
-                    r.orientation = LinearLayout.HORIZONTAL
-                    r.gravity = Gravity.CENTER_VERTICAL
-                    r.setPadding(dp(12), dp(12), dp(14), dp(12))
-                    r.layoutParams = lp()
-                    r.background = ripple(bg(CARD2, BD, 16))
-                    val bd = badge("АБВГДЕ"[j].toString(), tint(Color.WHITE, 0x22), 32, 14f)
-                    r.addView(bd)
-                    val lb = tv(o.getString(order[j]), 16f)
-                    val lpp = LinearLayout.LayoutParams(0, -2, 1f)
-                    lpp.leftMargin = dp(12)
-                    lb.layoutParams = lpp
-                    r.addView(lb)
-                    pressFx(r)
-                    opts.add(Opt(r, bd, lb))
-                    r.setOnClickListener {
-                        if (answered) return@setOnClickListener
-                        answered = true
-                        val good = j == a
-                        if (good) ok++ else wrong.add(q)
-                        record(q, good)
-                        r.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        for ((m, x) in opts.withIndex()) {
-                            if (m == a) {
-                                x.row.background = ripple(bg(tint(OK, 0x33), OK, 16))
-                                x.badge.background = circle(OK)
-                                x.badge.text = "✓"
-                                x.badge.setTextColor(ON_AC)
-                                x.row.animate().scaleX(1.03f).scaleY(1.03f).setDuration(150).withEndAction {
-                                    x.row.animate().scaleX(1f).scaleY(1f).setDuration(150).start()
-                                }.start()
-                            } else if (m == j) {
-                                x.row.background = ripple(bg(tint(BAD, 0x33), BAD, 16))
-                                x.badge.background = circle(BAD)
-                                x.badge.text = "✕"
-                                x.badge.setTextColor(ON_AC)
-                                val sh = dp(10).toFloat()
-                                ObjectAnimator.ofFloat(x.row, "translationX", 0f, -sh, sh, -sh / 2, sh / 2, 0f).setDuration(350).start()
-                            } else {
-                                x.row.animate().alpha(0.45f).setDuration(200).start()
-                            }
-                        }
-                        val ex = q.optString("e", "")
-                        if (ex.isNotEmpty()) {
-                            val ec = card()
-                            ec.addView(tv("💡 " + ex, 15f, false, 0xFFD6E0F7.toInt()))
-                            if (!good) {
-                                addView(ec)
-                                ec.alpha = 0f
-                                ec.animate().alpha(1f).setDuration(250).start()
-                            } else {
-                                val eb = btn("Чому так?", false) {}
-                                eb.setOnClickListener {
-                                    eb.visibility = View.GONE
-                                    addView(ec, indexOfChild(eb) + 1)
-                                    ec.alpha = 0f
-                                    ec.animate().alpha(1f).setDuration(250).start()
-                                }
-                                addView(eb)
-                            }
-                        }
-                        val nb = btn(if (k + 1 < qs.size) "Далі" else "Результат") {
-                            k++
-                            if (k < qs.size) ask() else end()
-                        }
-                        nb.alpha = 0f
-                        addView(nb)
-                        nb.animate().alpha(1f).setDuration(250).start()
-                        root.postDelayed({ root.smoothScrollTo(0, box.height) }, 300)
-                    }
-                    addView(r)
+                when (t) {
+                    "m" -> renderMatch(q, after)
+                    "w" -> renderWrite(q, after)
+                    "s" -> renderStress(q, after)
+                    else -> renderMcq(q, after)
                 }
             }
         }
