@@ -1,0 +1,50 @@
+name: Build Desktop
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUTF8: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fetch images
+        continue-on-error: true
+        run: python fetch_images.py
+      - name: Prepare
+        run: |
+          mkdir -p desktop/img
+          cp -r app/src/main/assets/img/. desktop/img/ || true
+          cp data.json data_ukr.json desktop/
+          echo "${{ github.repository }}" > desktop/repo.txt
+          echo "${GITHUB_RUN_NUMBER}" > desktop/build.txt
+      - name: Build EXE
+        working-directory: desktop
+        run: |
+          npm install --no-audit --no-fund
+          npx electron-builder --win portable --publish never
+      - name: Version file
+        run: |
+          printf '{"build": %s}' "$GITHUB_RUN_NUMBER" > desktop/dist/version.json
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: desktop-latest
+          name: Версія для комп'ютера
+          files: |
+            desktop/dist/NMT-Desktop.exe
+            desktop/dist/version.json
+          make_latest: false
