@@ -1297,11 +1297,31 @@ class MainActivity : Activity() {
         return o
     }
 
+    private fun practiceQs(ci: Int): List<JSONObject> {
+        val c = ukr.getJSONArray("practice").getJSONObject(ci)
+        val items = c.getJSONArray("items")
+        val l = ArrayList<JSONObject>()
+        for (i in 0 until items.length()) {
+            val it = items.getJSONArray(i)
+            val o = JSONObject()
+            o.put("t", "w")
+            o.put("pr", true)
+            o.put("q", it.getString(0))
+            o.put("ans", it.getJSONArray(1))
+            o.put("e", it.optString(2, ""))
+            o.put("h", c.optString("hint", ""))
+            l.add(o)
+        }
+        return l
+    }
+
     // Усі завдання з української мови (стабільні за текстом, тому статистика зберігається)
     private fun ukrPool(): List<JSONObject> {
         val l = ArrayList<JSONObject>()
         val n = ukr.getJSONArray("sections").length()
         for (i in 0 until n) l.addAll(secQ(i))
+        val pn = ukr.getJSONArray("practice").length()
+        for (i in 0 until pn) l.addAll(practiceQs(i))
         for ((w, i) in stressWords()) l.add(stressQ(w, i))
         val ph = phrases()
         for (i in ph.indices) l.add(phrQ(i, ph))
@@ -1350,6 +1370,7 @@ class MainActivity : Activity() {
             addView(r1)
             addView(r2)
             addView(sectionTitle("Розділи програми"))
+            addView(navRow("✍️", AC, "Практика письма", "е/и, апостроф, відмінки, ступені — пиши й закріплюй") { ukrPractice() })
             val secs = ukr.getJSONArray("sections")
             for (i in 0 until secs.length()) {
                 val sec = secs.getJSONObject(i)
@@ -1358,6 +1379,33 @@ class MainActivity : Activity() {
                 addView(navRow(sec.getString("ic"), ERA[i % ERA.size], sec.getString("t"), sub) { ukrSection(i) })
             }
             addView(siteU())
+        }
+    }
+
+    // Окреме меню: тут учимося писати, а не здаємо тест
+    private fun ukrPractice() {
+        show({ ukrHome() }) {
+            addView(h1("✍️ Практика письма"))
+            val info = card()
+            info.addView(tv("Тут не тест, а навчання. Пиши відповідь сам: є підказка з правилом, а після помилки можна спробувати ще раз.", 15f))
+            addView(info)
+            val pr = ukr.getJSONArray("practice")
+            addView(btn("Змішана практика (15 завдань)") {
+                val all = ArrayList<JSONObject>()
+                for (i in 0 until pr.length()) all.addAll(practiceQs(i))
+                quiz(all.shuffled().take(15), "p", "Практика письма") { ukrPractice() }
+            })
+            addView(sectionTitle("Теми"))
+            for (i in 0 until pr.length()) {
+                val c = pr.getJSONObject(i)
+                val n = c.getJSONArray("items").length()
+                val v = prefs().getFloat("p_" + c.getString("id"), -1f)
+                val sub = if (v < 0) "$n завдань" else "$n завдань · останній результат ${(v * 100).toInt()}%"
+                addView(navRow(c.getString("ic"), ERA[i % ERA.size], c.getString("t"), sub) {
+                    quiz(practiceQs(i).shuffled().take(10), "p_" + c.getString("id"), c.getString("t")) { ukrPractice() }
+                })
+            }
+            addView(btn("Назад", false) { ukrHome() })
         }
     }
 
@@ -1628,7 +1676,12 @@ class MainActivity : Activity() {
         et.background = bg(CARD2, BD, 16)
         et.layoutParams = lp()
         box.addView(et)
+        val retry = tv("", 14f, false, WARN)
+        retry.setPadding(dp(4), dp(8), dp(4), 0)
+        retry.visibility = View.GONE
+        box.addView(retry)
         var done = false
+        var tries = 0
         val check = btn("Перевірити") {}
         check.setOnClickListener {
             if (done) return@setOnClickListener
@@ -1637,16 +1690,26 @@ class MainActivity : Activity() {
                 Toast.makeText(this@MainActivity, "Впиши відповідь", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
-            done = true
+            tries++
             val ans = q.getJSONArray("ans")
             var good = false
             for (i in 0 until ans.length()) if (norm(ans.getString(i)) == u) good = true
+            // У практиці після першої помилки даємо ще одну спробу
+            if (!good && q.optBoolean("pr", false) && tries < 2) {
+                et.background = bg(tint(BAD, 0x33), BAD, 16)
+                retry.text = "Майже! Спробуй ще раз — подивись на підказку."
+                retry.visibility = View.VISIBLE
+                ObjectAnimator.ofFloat(et, "translationX", 0f, -dp(10).toFloat(), dp(10).toFloat(), 0f).setDuration(280).start()
+                return@setOnClickListener
+            }
+            done = true
             et.isEnabled = false
             val col = if (good) OK else BAD
             et.background = bg(tint(col, 0x33), col, 16)
+            retry.visibility = View.GONE
             hideKb(et)
             check.visibility = View.GONE
-            after(good, if (good) "" else "Правильна відповідь: " + ans.getString(0))
+            after(good && tries == 1, if (good) "" else "Правильна відповідь: " + ans.getString(0))
         }
         box.addView(check)
     }
@@ -1707,7 +1770,7 @@ class MainActivity : Activity() {
             if (key != "r" && key != "w") prefs().edit().putFloat(key, p).apply()
             addHistory(title, ok, qs.size)
             val ringColor = if (p >= 0.7f) OK else if (p >= 0.5f) WARN else BAD
-            val isUkr = key.startsWith("u")
+            val isUkr = key.startsWith("u") || key.startsWith("p")
             show(ret) {
                 addView(tv(title, 14f, false, MU))
                 addView(h1("Результат"))
@@ -1797,6 +1860,12 @@ class MainActivity : Activity() {
                 val qc = card()
                 qc.addView(tv(q.getString("q"), 20f, true))
                 addView(qc)
+                val hintTxt = q.optString("h", "")
+                if (hintTxt.isNotEmpty()) {
+                    val ht = tv("💡 Підказка: " + hintTxt, 13f, false, MU)
+                    ht.setPadding(dp(4), dp(8), dp(4), 0)
+                    addView(ht)
+                }
                 when (t) {
                     "m" -> renderMatch(q, after)
                     "w" -> renderWrite(q, after)

@@ -1,0 +1,38 @@
+{
+  "name": "nmt-desktop",
+  "version": "1.0.0",
+  "description": "НМТ Навчання — версія для комп'ютера",
+  "main": "main.js",
+  "author": "NMT",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron ."
+  },
+  "build": {
+    "appId": "com.nmt.desktop",
+    "productName": "NMT",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "style.css",
+      "app.js",
+      "data.json",
+      "data_ukr.json",
+      "repo.txt",
+      "build.txt",
+      "img/**"
+    ],
+    "win": {
+      "target": "portable",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "NMT-Desktop.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3"
+  }
+}
