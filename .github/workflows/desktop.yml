@@ -28,6 +28,11 @@ jobs:
       - name: Prepare
         run: |
           mkdir -p desktop/img
+          # Якщо файли програми лежать у корені репозиторію (а не в папці desktop) — переносимо їх
+          for f in package.json main.js preload.js index.html style.css app.js; do
+            if [ ! -f "desktop/$f" ] && [ -f "$f" ]; then cp "$f" "desktop/$f"; fi
+          done
+          test -f desktop/package.json || { echo "Немає package.json ні в desktop/, ні в корені репозиторію"; exit 1; }
           cp -r app/src/main/assets/img/. desktop/img/ || true
           cp data.json data_ukr.json desktop/
           echo "${{ github.repository }}" > desktop/repo.txt
